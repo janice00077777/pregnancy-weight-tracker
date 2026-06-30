@@ -1,5 +1,11 @@
 import { type FormEvent, useMemo, useState } from 'react';
 import { calculateBMIResult, getBMICategoryLabel } from './services/bmi';
+import {
+  createTrendChartScale,
+  TREND_CHART_GAIN_TICKS,
+  TREND_CHART_VIEWBOX,
+  TREND_CHART_WEEK_TICKS,
+} from './services/chart';
 import { calculatePregnancyProgress, isValidDateOnly } from './services/pregnancy';
 import {
   createWeightSaveFeedback,
@@ -14,6 +20,7 @@ import {
   type WeightSaveFeedback,
 } from './services/records';
 import { loadProfile, loadRecords, saveProfile, saveRecords } from './services/storage';
+import { buildWeeklyWeightTrend } from './services/trend';
 import type { PregnancyProfile, WeightRecord } from './types/pregnancy';
 
 type TabId = 'home' | 'trend' | 'settings';
@@ -109,7 +116,13 @@ function App() {
               onRecordCreated={handleRecordCreated}
             />
           )}
-          {activeTab === 'trend' && <TrendPage recordCount={appData.recordCount} />}
+          {activeTab === 'trend' && (
+            <TrendPage
+              profile={appData.profile}
+              records={appData.records}
+              recordCount={appData.recordCount}
+            />
+          )}
           {activeTab === 'settings' && (
             <SettingsPage hasProfile={Boolean(appData.profile)} recordCount={appData.recordCount} />
           )}
@@ -550,7 +563,27 @@ function PregnancyProgressHeader({ profile }: { profile: PregnancyProfile }) {
   );
 }
 
-function TrendPage({ recordCount }: { recordCount: number }) {
+function TrendPage({
+  profile,
+  records,
+  recordCount,
+}: {
+  profile: PregnancyProfile;
+  records: WeightRecord[];
+  recordCount: number;
+}) {
+  const trendPoints = buildWeeklyWeightTrend(records, profile);
+  const highestGain = Math.max(16, ...trendPoints.map((point) => point.gainKg));
+  const lowestGain = Math.min(0, ...trendPoints.map((point) => point.gainKg));
+  const chartScale = createTrendChartScale({
+    domain: {
+      minWeek: 1,
+      maxWeek: 40,
+      minGainKg: Math.floor(lowestGain),
+      maxGainKg: Math.ceil(highestGain),
+    },
+  });
+
   return (
     <section className="space-y-5" aria-labelledby="trend-title">
       <div className="rounded-[24px] border border-stone-200 bg-warm-white p-5 shadow-soft">
@@ -558,8 +591,122 @@ function TrendPage({ recordCount }: { recordCount: number }) {
         <h2 id="trend-title" className="mt-1 text-2xl font-semibold">
           增重曲线
         </h2>
-        <div className="mt-6 flex aspect-[4/3] items-center justify-center rounded-[20px] border border-stone-200 bg-mist text-center text-sm leading-6 text-forest-700">
-          Issue 15 后接入 SVG 趋势图
+        <div className="mt-6 rounded-[20px] border border-stone-200 bg-mist p-3">
+          <svg
+            className="h-auto w-full overflow-visible"
+            viewBox={`0 0 ${TREND_CHART_VIEWBOX.width} ${TREND_CHART_VIEWBOX.height}`}
+            role="img"
+            aria-labelledby="trend-chart-title trend-chart-desc"
+          >
+            <title id="trend-chart-title">孕期体重增重趋势坐标图</title>
+            <desc id="trend-chart-desc">横轴为孕周，纵轴为相对孕前体重的增重千克。</desc>
+            <rect
+              x={chartScale.padding.left}
+              y={chartScale.padding.top}
+              width={chartScale.plotWidth}
+              height={chartScale.plotHeight}
+              rx="8"
+              fill="#fffdf8"
+              opacity="0.72"
+            />
+
+            {TREND_CHART_GAIN_TICKS.map((tick) => {
+              const y = chartScale.yForGain(tick);
+
+              return (
+                <g key={tick}>
+                  <line
+                    x1={chartScale.padding.left}
+                    y1={y}
+                    x2={chartScale.width - chartScale.padding.right}
+                    y2={y}
+                    stroke="#e4ddcf"
+                    strokeWidth="1"
+                  />
+                  <text
+                    x={chartScale.padding.left - 10}
+                    y={y + 4}
+                    fill="#687965"
+                    fontSize="10"
+                    textAnchor="end"
+                  >
+                    {tick}
+                  </text>
+                </g>
+              );
+            })}
+
+            {TREND_CHART_WEEK_TICKS.map((tick) => {
+              const x = chartScale.xForWeek(tick);
+
+              return (
+                <g key={tick}>
+                  <line
+                    x1={x}
+                    y1={chartScale.padding.top}
+                    x2={x}
+                    y2={chartScale.height - chartScale.padding.bottom}
+                    stroke="#eadfcb"
+                    strokeWidth="1"
+                  />
+                  <text
+                    x={x}
+                    y={chartScale.height - 17}
+                    fill="#687965"
+                    fontSize="10"
+                    textAnchor="middle"
+                  >
+                    {tick}
+                  </text>
+                </g>
+              );
+            })}
+
+            <line
+              x1={chartScale.padding.left}
+              y1={chartScale.height - chartScale.padding.bottom}
+              x2={chartScale.width - chartScale.padding.right}
+              y2={chartScale.height - chartScale.padding.bottom}
+              stroke="#53614f"
+              strokeWidth="1.4"
+            />
+            <line
+              x1={chartScale.padding.left}
+              y1={chartScale.padding.top}
+              x2={chartScale.padding.left}
+              y2={chartScale.height - chartScale.padding.bottom}
+              stroke="#53614f"
+              strokeWidth="1.4"
+            />
+
+            {trendPoints.map((point) => (
+              <circle
+                key={point.week}
+                cx={chartScale.xForWeek(point.week)}
+                cy={chartScale.yForGain(point.gainKg)}
+                r="3.6"
+                fill="#334538"
+              />
+            ))}
+
+            <text x="10" y="14" fill="#4a5e4e" fontSize="10">
+              增重 kg
+            </text>
+            <text
+              x={chartScale.width - chartScale.padding.right}
+              y={chartScale.height - 4}
+              fill="#4a5e4e"
+              fontSize="10"
+              textAnchor="end"
+            >
+              孕周
+            </text>
+          </svg>
+          {trendPoints.length === 0 && (
+            <p className="mt-3 text-center text-sm leading-6 text-forest-700">
+              保存体重后，这里会安静地出现趋势点。
+            </p>
+          )}
         </div>
       </div>
 
