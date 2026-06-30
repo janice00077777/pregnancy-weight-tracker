@@ -1,0 +1,197 @@
+@import url("https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;600;700&display=swap");
+@import "tailwindcss";
+
+@theme {
+  --font-serif-cn: "Noto Serif SC", "Songti SC", "STSong", "SimSun", serif;
+
+  --color-forest-950: #1d281f;
+  --color-forest-900: #27352b;
+  --color-forest-800: #334538;
+  --color-forest-700: #4a5e4e;
+  --color-moss-700: #53614f;
+  --color-moss-600: #687965;
+  --color-sage-500: #8b9a82;
+  --color-leaf-400: #a8b79c;
+  --color-stone-300: #d8d1c0;
+  --color-stone-200: #e4ddcf;
+  --color-mist: #f6f3ec;
+  --color-warm-white: #fffdf8;
+  --color-wood-200: #d7c4a4;
+  --color-wood-100: #eadfcb;
+
+  --radius-button: 16px;
+  --shadow-soft: 0 18px 45px rgb(39 53 43 / 0.1);
+}
+
+@layer base {
+  :root {
+    color: var(--color-forest-900);
+    background: var(--color-mist);
+    font-family: var(--font-serif-cn);
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  html {
+    background: var(--color-mist);
+  }
+
+  body {
+    min-width: 320px;
+    min-height: 100vh;
+    margin: 0;
+  }
+
+  button,
+  input,
+  textarea,
+  select {
+    font: inherit;
+  }
+
+  button {
+    border-radius: var(--radius-button);
+  }
+
+  input,
+  textarea,
+  select {
+    border-radius: var(--radius-button);
+  }
+
+  ::selection {
+    color: var(--color-forest-950);
+    background: var(--color-wood-100);
+  }
+}
+
+@layer components {
+  .app-button {
+    min-height: 48px;
+    border-radius: var(--radius-button);
+    background: var(--color-forest-800);
+    color: var(--color-warm-white);
+    padding: 0 18px;
+    font-weight: 600;
+    border: 1px solid var(--color-forest-800);
+    transition:
+      background-color 160ms ease,
+      border-color 160ms ease,
+      transform 160ms ease;
+  }
+
+  .app-button:hover {
+    background: var(--color-forest-900);
+    border-color: var(--color-forest-900);
+  }
+
+  .app-button:active {
+    transform: translateY(1px);
+  }
+
+  .app-button:focus-visible,
+  .app-input:focus-visible,
+  .tab-button:focus-visible {
+    outline: 3px solid rgb(168 183 156 / 0.55);
+    outline-offset: 3px;
+  }
+
+  .app-button-secondary {
+    background: var(--color-warm-white);
+    color: var(--color-forest-800);
+    border-color: var(--color-stone-300);
+  }
+
+  .app-button-secondary:hover {
+    background: var(--color-mist);
+    border-color: var(--color-sage-500);
+  }
+
+  .app-input {
+    min-height: 48px;
+    width: 100%;
+    border: 1px solid var(--color-stone-300);
+    border-radius: var(--radius-button);
+    background: var(--color-warm-white);
+    color: var(--color-forest-900);
+    padding: 0 16px;
+  }
+
+  .app-input::placeholder {
+    color: var(--color-moss-600);
+  }
+
+  .tab-button {
+    min-height: 62px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    border: 1px solid transparent;
+    border-radius: var(--radius-button);
+    color: var(--color-forest-700);
+    background: transparent;
+    transition:
+      background-color 160ms ease,
+      border-color 160ms ease,
+      color 160ms ease,
+      transform 160ms ease;
+  }
+
+  .tab-button:hover {
+    background: var(--color-mist);
+  }
+
+  .tab-button:active {
+    transform: translateY(1px);
+  }
+
+  .tab-button-active {
+    color: var(--color-forest-950);
+    border-color: var(--color-stone-200);
+    background: var(--color-mist);
+  }
+
+  .note-button {
+    min-height: 44px;
+    border: 1px solid var(--color-stone-300);
+    border-radius: var(--radius-button);
+    background: var(--color-warm-white);
+    color: var(--color-forest-700);
+    padding: 0 10px;
+    font-size: 0.875rem;
+    font-weight: 500;
+    transition:
+      background-color 160ms ease,
+      border-color 160ms ease,
+      color 160ms ease,
+      transform 160ms ease;
+  }
+
+  .note-button:hover {
+    background: var(--color-mist);
+    border-color: var(--color-sage-500);
+  }
+
+  .note-button:active {
+    transform: translateY(1px);
+  }
+
+  .note-button:focus-visible {
+    outline: 3px solid rgb(168 183 156 / 0.55);
+    outline-offset: 3px;
+  }
+
+  .note-button-active {
+    background: var(--color-forest-800);
+    border-color: var(--color-forest-800);
+    color: var(--color-warm-white);
+  }
+}
