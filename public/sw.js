@@ -1,5 +1,11 @@
 const CACHE_VERSION = 'pregnancy-weight-tracker-v1';
-const APP_SHELL_URLS = ['/', '/index.html', '/manifest.webmanifest', '/icon.svg'];
+const APP_BASE_PATH = new URL(self.registration.scope).pathname;
+const APP_SHELL_URLS = [
+  APP_BASE_PATH,
+  `${APP_BASE_PATH}index.html`,
+  `${APP_BASE_PATH}manifest.webmanifest`,
+  `${APP_BASE_PATH}icon.svg`,
+];
 const CACHEABLE_DESTINATIONS = new Set(['document', 'script', 'style', 'image', 'font', 'manifest']);
 
 const isHttpRequest = (request) => request.url.startsWith('http://') || request.url.startsWith('https://');
@@ -21,7 +27,7 @@ const isCacheableRequest = (request) => {
     return false;
   }
 
-  return CACHEABLE_DESTINATIONS.has(request.destination) || url.pathname.startsWith('/assets/');
+  return CACHEABLE_DESTINATIONS.has(request.destination) || url.pathname.startsWith(`${APP_BASE_PATH}assets/`);
 };
 
 self.addEventListener('install', (event) => {
@@ -63,11 +69,11 @@ const handleNavigationRequest = async (request) => {
   try {
     const response = await fetchAndCache(request);
     const cache = await caches.open(CACHE_VERSION);
-    await cache.put('/index.html', response.clone());
+    await cache.put(`${APP_BASE_PATH}index.html`, response.clone());
 
     return response;
   } catch {
-    const cachedResponse = await caches.match('/index.html');
+    const cachedResponse = await caches.match(`${APP_BASE_PATH}index.html`);
 
     return cachedResponse ?? Response.error();
   }
