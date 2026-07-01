@@ -9,9 +9,12 @@ import {
   TREND_CHART_WEEK_TICKS,
 } from './services/chart';
 import {
+  buildImportTemplateCsv,
+  buildImportTemplateWorkbook,
   buildRecordsCsv,
   getLatestHistoryRecords,
   mergeRecordsByNewestCreatedAt,
+  parseRecordsWorkbook,
   parseRecordsCsv,
   type CsvImportPreview,
 } from './services/csv';
@@ -182,6 +185,27 @@ const downloadTextFile = ({
 }: {
   filename: string;
   content: string;
+  mimeType: string;
+}) => {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+};
+
+const downloadBinaryFile = ({
+  filename,
+  content,
+  mimeType,
+}: {
+  filename: string;
+  content: BlobPart;
   mimeType: string;
 }) => {
   const blob = new Blob([content], { type: mimeType });
@@ -1177,6 +1201,22 @@ function SettingsPage({
     setExportMessage(`已准备导出 ${getLatestHistoryRecords(records).length} 天记录。`);
   };
 
+  const handleDownloadCsvTemplate = () => {
+    downloadTextFile({
+      filename: 'pregnancy-weight-import-template.csv',
+      content: `\uFEFF${buildImportTemplateCsv()}`,
+      mimeType: 'text/csv;charset=utf-8',
+    });
+  };
+
+  const handleDownloadExcelTemplate = async () => {
+    downloadBinaryFile({
+      filename: 'pregnancy-weight-import-template.xlsx',
+      content: await buildImportTemplateWorkbook(),
+      mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    });
+  };
+
   const handlePreviewImport = () => {
     setImportError('');
     setImportMessage('');
@@ -1185,7 +1225,7 @@ function SettingsPage({
     setImportPreview(preview);
 
     if (preview.records.length === 0) {
-      setImportError('没有找到可导入的记录。');
+      setImportError('没有找到可导入的记录。请至少保留 date 和 weightKg 两列。');
       return;
     }
 
@@ -1206,26 +1246,28 @@ function SettingsPage({
     const fileName = file.name.toLowerCase();
     const isCsvLike =
       fileName.endsWith('.csv') || file.type === 'text/csv' || file.type === 'text/plain' || file.type === '';
+    const isExcelLike =
+      fileName.endsWith('.xlsx') ||
+      fileName.endsWith('.xls') ||
+      file.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+      file.type === 'application/vnd.ms-excel';
 
-    if (!isCsvLike) {
-      setImportError('请选择 CSV 文件，或粘贴 CSV 内容导入。');
+    if (!isCsvLike && !isExcelLike) {
+      setImportError('请选择 CSV 或 Excel 文件，也可以粘贴 CSV 内容导入。');
       return;
     }
 
     try {
-      const fileText = await file.text();
+      const fileText = isExcelLike ? '' : await file.text();
+      const preview = isExcelLike
+        ? await parseRecordsWorkbook(await file.arrayBuffer())
+        : parseRecordsCsv(fileText);
 
-      if (!fileText.trim()) {
-        setImportError('这个文件里没有可读取的 CSV 内容。');
-        return;
-      }
-
-      const preview = parseRecordsCsv(fileText);
       setImportText(fileText);
       setImportPreview(preview);
 
       if (preview.records.length === 0) {
-        setImportError('文件已读取，但没有找到可导入的记录。');
+        setImportError('文件已读取，但没有找到可导入的记录。请至少保留 date 和 weightKg 两列。');
         return;
       }
 
@@ -1233,13 +1275,13 @@ function SettingsPage({
         `已读取 ${file.name}，准备导入 ${preview.records.length} 条记录，${preview.skippedRows.length} 行会被跳过。`,
       );
     } catch {
-      setImportError('文件暂时无法读取，可以改用粘贴 CSV 内容导入。');
+      setImportError('文件暂时无法读取，可以下载模板后，把记录复制进去再导入。');
     }
   };
 
   const handleConfirmImport = () => {
     if (!importPreview || importPreview.records.length === 0) {
-      setImportError('请先预览可导入的 CSV 内容。');
+      setImportError('请先选择文件或预览可导入的 CSV 内容。');
       return;
     }
 
@@ -1390,27 +1432,49 @@ function SettingsPage({
         className="rounded-[24px] border border-stone-200 bg-warm-white p-5 shadow-soft"
       >
         <p className="text-sm text-moss-600">导入数据</p>
-        <h3 className="mt-1 text-xl font-semibold text-forest-900">CSV 恢复</h3>
+        <h3 className="mt-1 text-xl font-semibold text-forest-900">导入记录</h3>
         <div className="mt-5 grid gap-4">
+          <div className="grid gap-2 sm:grid-cols-2">
+            <button
+              className="app-button app-button-secondary"
+              type="button"
+              onClick={() => {
+                void handleDownloadExcelTemplate();
+              }}
+            >
+              下载 Excel 模板
+            </button>
+            <button
+              className="app-button app-button-secondary"
+              type="button"
+              onClick={handleDownloadCsvTemplate}
+            >
+              下载 CSV 模板
+            </button>
+          </div>
+
           <div className="grid gap-2">
             <label className="text-sm font-medium text-forest-700" htmlFor="csv-file-import">
-              选择 CSV 文件
+              选择 CSV 或 Excel 文件
             </label>
             <input
               id="csv-file-import"
               className="app-input py-3"
               type="file"
-              accept=".csv,text/csv,text/plain"
+              accept=".csv,.xlsx,.xls,text/csv,text/plain,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
               onChange={(event) => {
                 void handleImportFile(event.target.files?.[0]);
                 event.target.value = '';
               }}
             />
+            <p className="text-xs leading-5 text-moss-600">
+              支持 date/日期 + weightKg/体重 两列；日期可写 2026-02-08 或 2026/2/8。
+            </p>
           </div>
 
           <textarea
             className="app-input min-h-40 py-3 leading-6"
-            placeholder="也可以粘贴 date,weightKg,note,createdAt 格式的 CSV 内容"
+            placeholder="也可以粘贴 CSV 内容，例如：date,weightKg,note"
             value={importText}
             onChange={(event) => {
               setImportText(event.target.value);
@@ -1478,7 +1542,7 @@ function SettingsPage({
             如果清理浏览器数据、更换设备，或使用隐私模式，本地记录可能不会继续保留。
           </p>
           <p>
-            可以隔一段时间导出 CSV，留一份自己的备份；需要恢复时，再从这里导入。
+            可以隔一段时间导出 CSV，留一份自己的备份；需要恢复时，可从 CSV 或 Excel 导入。
           </p>
         </div>
         <button className="app-button app-button-secondary mt-5 w-full" type="button" onClick={handleExportCsv}>

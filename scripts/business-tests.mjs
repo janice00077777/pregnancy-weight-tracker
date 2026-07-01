@@ -128,6 +128,21 @@ const testCSV = async () => {
   assert.equal(preview.records[0].date, '2026-06-30');
   assert.equal(preview.skippedRows.length, 3);
 
+  const simplePreview = csv.parseRecordsCsv(
+    'date,weightKg\r\n2026/2/8,58.8\r\n2026/2/25,58.5',
+  );
+
+  assert.equal(simplePreview.records.length, 2);
+  assert.equal(simplePreview.records[0].date, '2026-02-08');
+  assert.equal(simplePreview.records[0].weightKg, 58.8);
+  assert.equal(simplePreview.records[0].createdAt > 0, true);
+
+  const chineseHeaderPreview = csv.parseRecordsCsv('日期,体重,备注\r\n2026年3月5日,58.1,晨起');
+
+  assert.equal(chineseHeaderPreview.records.length, 1);
+  assert.equal(chineseHeaderPreview.records[0].date, '2026-03-05');
+  assert.equal(chineseHeaderPreview.records[0].note, '晨起');
+
   const merged = csv.mergeRecordsByNewestCreatedAt(
     [{ date: '2026-06-30', weightKg: 62, note: '旧', createdAt: 1 }],
     [
