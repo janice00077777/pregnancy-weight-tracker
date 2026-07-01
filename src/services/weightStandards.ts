@@ -143,14 +143,14 @@ export const BMI_GAIN_STANDARD_TABLE: Record<BMICategory, BMIGainStandard> = {
   }),
   overweight: createBMIGainStandard({
     category: 'overweight',
-    bmiLabel: '超重',
+    bmiLabel: '偏高',
     bmiRangeText: '24 <= BMI < 28',
     totalGainMinKg: 7,
     totalGainMaxKg: 11,
   }),
   obese: createBMIGainStandard({
     category: 'obese',
-    bmiLabel: '肥胖',
+    bmiLabel: '偏高较多',
     bmiRangeText: 'BMI >= 28',
     totalGainMinKg: 5,
     totalGainMaxKg: 9,

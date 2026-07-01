@@ -3,11 +3,19 @@ import type { PregnancyProfile, WeightRecord } from '../types/pregnancy';
 export const STORAGE_KEYS = {
   profile: 'pregnancy_profile',
   records: 'pregnancy_records',
+  importSnapshot: 'pregnancy_import_snapshot',
 } as const;
 
 export type StorageResult<T> = {
   data: T;
   error?: string;
+};
+
+export type LocalDataSnapshot = {
+  profile: PregnancyProfile | null;
+  records: WeightRecord[];
+  createdAt: number;
+  reason: 'before-import';
 };
 
 const isBrowser = () => typeof window !== 'undefined' && Boolean(window.localStorage);
@@ -63,7 +71,7 @@ const readJson = <T>(key: string, fallback: T): StorageResult<T> => {
 
     return { data: JSON.parse(rawValue) as T };
   } catch {
-    return { data: fallback, error: `${key} 数据读取失败，已使用空数据兜底` };
+    return { data: fallback, error: `${key} 数据暂时无法读取，已使用空数据兜底` };
   }
 };
 
@@ -76,7 +84,7 @@ const writeJson = <T>(key: string, value: T): StorageResult<T> => {
     window.localStorage.setItem(key, JSON.stringify(value));
     return { data: value };
   } catch {
-    return { data: value, error: `${key} 数据保存失败` };
+    return { data: value, error: `${key} 数据暂时没有保存成功` };
   }
 };
 
@@ -86,7 +94,7 @@ export const loadProfile = (): StorageResult<PregnancyProfile | null> => {
   if (!isPregnancyProfile(result.data)) {
     return {
       data: null,
-      error: result.error ?? (result.data === null ? undefined : '个人信息格式异常，已使用空数据兜底'),
+      error: result.error ?? (result.data === null ? undefined : '个人信息格式暂时无法读取，已使用空数据兜底'),
     };
   }
 
@@ -102,7 +110,7 @@ export const loadRecords = (): StorageResult<WeightRecord[]> => {
   if (!Array.isArray(result.data)) {
     return {
       data: [],
-      error: result.error ?? '体重记录格式异常，已使用空数据兜底',
+      error: result.error ?? '体重记录格式暂时无法读取，已使用空数据兜底',
     };
   }
 
@@ -112,10 +120,26 @@ export const loadRecords = (): StorageResult<WeightRecord[]> => {
     data: records,
     error:
       result.error ??
-      (records.length === result.data.length ? undefined : '部分体重记录格式异常，已跳过'),
+      (records.length === result.data.length ? undefined : '部分体重记录格式暂时无法读取，已跳过'),
   };
 };
 
 export const saveRecords = (records: WeightRecord[]): StorageResult<WeightRecord[]> =>
   writeJson(STORAGE_KEYS.records, records);
 
+export const createImportSnapshot = ({
+  profile,
+  records,
+}: {
+  profile: PregnancyProfile | null;
+  records: WeightRecord[];
+}): StorageResult<LocalDataSnapshot> => {
+  const snapshot: LocalDataSnapshot = {
+    profile,
+    records,
+    createdAt: Date.now(),
+    reason: 'before-import',
+  };
+
+  return writeJson(STORAGE_KEYS.importSnapshot, snapshot);
+};

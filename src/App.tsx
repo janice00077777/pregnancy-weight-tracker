@@ -9,6 +9,13 @@ import {
   TREND_CHART_WEEK_TICKS,
 } from './services/chart';
 import {
+  buildRecordsCsv,
+  getLatestHistoryRecords,
+  mergeRecordsByNewestCreatedAt,
+  parseRecordsCsv,
+  type CsvImportPreview,
+} from './services/csv';
+import {
   calculatePregnancyProgress,
   getGestationalWeekByDate,
   getTodayDateOnly,
@@ -22,12 +29,17 @@ import {
   parseWeightInput,
   QUICK_NOTES,
   roundWeightToOneDecimal,
-  sortRecordsByDateDesc,
   upsertRecordByDate,
   type QuickNote,
   type WeightSaveFeedback,
 } from './services/records';
-import { loadProfile, loadRecords, saveProfile, saveRecords } from './services/storage';
+import {
+  createImportSnapshot,
+  loadProfile,
+  loadRecords,
+  saveProfile,
+  saveRecords,
+} from './services/storage';
 import { buildWeeklyWeightTrend, type WeeklyWeightTrendPoint } from './services/trend';
 import {
   BMI_GAIN_STANDARD_TABLE,
@@ -118,11 +130,11 @@ const buildStandardRangeBandPath = (
 
 const getReferenceStatusText = (status: WeightStatus | null) => {
   if (status === 'low') {
-    return '低于参考区间';
+    return '低于参考区间，仅作趋势参考';
   }
 
   if (status === 'high') {
-    return '高于参考区间';
+    return '高于参考区间，仅作趋势参考';
   }
 
   if (status === 'normal') {
@@ -130,6 +142,14 @@ const getReferenceStatusText = (status: WeightStatus | null) => {
   }
 
   return '暂无参考状态';
+};
+
+const getReferenceStatusNote = (status: WeightStatus | null) => {
+  if (status === 'low' || status === 'high') {
+    return '如果连续多次明显偏离参考区间，可以在产检时咨询医生。';
+  }
+
+  return '这里不做诊断，只帮助你安静地看见趋势。';
 };
 
 const formatRangeText = (range: GestationalWeightRange | null) => {
@@ -155,43 +175,6 @@ const formatGestationalWeekText = (week: number | null) => {
   return `第 ${week} 周`;
 };
 
-const getLatestHistoryRecords = (records: WeightRecord[]) => {
-  const latestRecordsByDate = new Map<string, WeightRecord>();
-
-  records.forEach((record) => {
-    const currentRecord = latestRecordsByDate.get(record.date);
-
-    if (!currentRecord || record.createdAt > currentRecord.createdAt) {
-      latestRecordsByDate.set(record.date, record);
-    }
-  });
-
-  return sortRecordsByDateDesc(Array.from(latestRecordsByDate.values()));
-};
-const escapeCsvField = (value: string | number) => {
-  const stringValue = String(value);
-
-  if (!/[",\r\n]/.test(stringValue)) {
-    return stringValue;
-  }
-
-  return `"${stringValue.replaceAll('"', '""')}"`;
-};
-
-const buildRecordsCsv = (records: WeightRecord[]) => {
-  const header = ['date', 'weightKg', 'note', 'createdAt'];
-  const rows = getLatestHistoryRecords(records).map((record) => [
-    record.date,
-    formatWeightInput(record.weightKg),
-    record.note ?? '',
-    record.createdAt,
-  ]);
-
-  return [header, ...rows]
-    .map((row) => row.map((field) => escapeCsvField(field)).join(','))
-    .join('\r\n');
-};
-
 const downloadTextFile = ({
   filename,
   content,
@@ -211,132 +194,6 @@ const downloadTextFile = ({
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
-};
-
-type CsvImportPreview = {
-  records: WeightRecord[];
-  skippedRows: { rowNumber: number; reason: string }[];
-};
-
-const parseCsvRows = (value: string) => {
-  const rows: string[][] = [];
-  let row: string[] = [];
-  let field = '';
-  let inQuotes = false;
-
-  for (let index = 0; index < value.length; index += 1) {
-    const char = value[index];
-    const nextChar = value[index + 1];
-
-    if (char === '"') {
-      if (inQuotes && nextChar === '"') {
-        field += '"';
-        index += 1;
-      } else {
-        inQuotes = !inQuotes;
-      }
-      continue;
-    }
-
-    if (char === ',' && !inQuotes) {
-      row.push(field);
-      field = '';
-      continue;
-    }
-
-    if ((char === '\n' || char === '\r') && !inQuotes) {
-      if (char === '\r' && nextChar === '\n') {
-        index += 1;
-      }
-      row.push(field);
-      if (row.some((cell) => cell.trim() !== '')) {
-        rows.push(row);
-      }
-      row = [];
-      field = '';
-      continue;
-    }
-
-    field += char;
-  }
-
-  row.push(field);
-  if (row.some((cell) => cell.trim() !== '')) {
-    rows.push(row);
-  }
-
-  return rows;
-};
-
-const parseCsvTimestamp = (value: string) => {
-  const timestamp = Number(value.trim());
-
-  return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : null;
-};
-
-const parseRecordsCsv = (csvText: string): CsvImportPreview => {
-  const normalizedText = csvText.replace(/^\uFEFF/, '').trim();
-
-  if (!normalizedText) {
-    return { records: [], skippedRows: [] };
-  }
-
-  const rows = parseCsvRows(normalizedText);
-  const firstRow = rows[0]?.map((cell) => cell.trim()) ?? [];
-  const hasHeader = firstRow.includes('date') && firstRow.includes('weightKg');
-  const fieldIndexes = hasHeader
-    ? {
-        date: firstRow.indexOf('date'),
-        weightKg: firstRow.indexOf('weightKg'),
-        note: firstRow.indexOf('note'),
-        createdAt: firstRow.indexOf('createdAt'),
-      }
-    : { date: 0, weightKg: 1, note: 2, createdAt: 3 };
-  const dataRows = hasHeader ? rows.slice(1) : rows;
-  const rowOffset = hasHeader ? 2 : 1;
-  const records: WeightRecord[] = [];
-  const skippedRows: CsvImportPreview['skippedRows'] = [];
-
-  dataRows.forEach((row, index) => {
-    const rowNumber = index + rowOffset;
-    const date = row[fieldIndexes.date]?.trim() ?? '';
-    const weightKg = parseWeightInput(row[fieldIndexes.weightKg]?.trim() ?? '');
-    const note = fieldIndexes.note >= 0 ? row[fieldIndexes.note]?.trim() : '';
-    const createdAt = parseCsvTimestamp(row[fieldIndexes.createdAt]?.trim() ?? '');
-
-    if (!isValidDateOnly(date)) {
-      skippedRows.push({ rowNumber, reason: '日期格式不是 YYYY-MM-DD' });
-      return;
-    }
-
-    if (weightKg === null || weightKg < 30 || weightKg > 180) {
-      skippedRows.push({ rowNumber, reason: '体重数值不在可导入范围内' });
-      return;
-    }
-
-    if (createdAt === null) {
-      skippedRows.push({ rowNumber, reason: 'createdAt 不是有效时间戳' });
-      return;
-    }
-
-    records.push({ date, weightKg, note: note || undefined, createdAt });
-  });
-
-  return { records, skippedRows };
-};
-
-const mergeRecordsByNewestCreatedAt = (currentRecords: WeightRecord[], importedRecords: WeightRecord[]) => {
-  const recordsByDate = new Map<string, WeightRecord>();
-
-  [...currentRecords, ...importedRecords].forEach((record) => {
-    const currentRecord = recordsByDate.get(record.date);
-
-    if (!currentRecord || record.createdAt > currentRecord.createdAt) {
-      recordsByDate.set(record.date, record);
-    }
-  });
-
-  return sortRecordsByDateDesc(Array.from(recordsByDate.values()));
 };
 
 function App() {
@@ -1158,6 +1015,9 @@ function TrendPage({
                   <p className="mt-1 font-semibold text-forest-900">
                     {getReferenceStatusText(selectedStatus)}
                   </p>
+                  <p className="mt-1 text-xs leading-5 text-moss-600">
+                    {getReferenceStatusNote(selectedStatus)}
+                  </p>
                 </div>
               </div>
             </div>
@@ -1325,7 +1185,7 @@ function SettingsPage({
     setImportPreview(preview);
 
     if (preview.records.length === 0) {
-      setImportError('没有找到可导入的有效记录。');
+      setImportError('没有找到可导入的记录。');
       return;
     }
 
@@ -1365,7 +1225,7 @@ function SettingsPage({
       setImportPreview(preview);
 
       if (preview.records.length === 0) {
-        setImportError('文件已读取，但没有找到可导入的有效记录。');
+        setImportError('文件已读取，但没有找到可导入的记录。');
         return;
       }
 
@@ -1380,6 +1240,13 @@ function SettingsPage({
   const handleConfirmImport = () => {
     if (!importPreview || importPreview.records.length === 0) {
       setImportError('请先预览可导入的 CSV 内容。');
+      return;
+    }
+
+    const snapshotResult = createImportSnapshot({ profile, records });
+
+    if (snapshotResult.error) {
+      setImportError(`${snapshotResult.error}，导入暂未继续。`);
       return;
     }
 
@@ -1571,7 +1438,7 @@ function SettingsPage({
             <div className="rounded-[16px] border border-stone-200 bg-mist p-4 text-sm text-forest-800">
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <p className="text-xs text-moss-600">有效记录</p>
+                  <p className="text-xs text-moss-600">可导入记录</p>
                   <p className="mt-1 font-semibold">{importPreview.records.length} 条</p>
                 </div>
                 <div>

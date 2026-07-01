@@ -2,6 +2,7 @@
 node_modules
 .npm-cache
 .tmp-storage-test
+.tmp-business-tests
 
 # Build output
 dist

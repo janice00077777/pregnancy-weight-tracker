@@ -13,8 +13,8 @@ export type BMIResult = {
 export const BMI_CATEGORY_LABELS: Record<BMICategory, string> = {
   underweight: '偏瘦',
   normal: '正常',
-  overweight: '超重',
-  obese: '肥胖',
+  overweight: '偏高',
+  obese: '偏高较多',
 };
 
 const roundToOneDecimal = (value: number) => Math.round(value * 10) / 10;
@@ -61,4 +61,3 @@ export const calculateBMIResult = (input: BMIInput): BMIResult => {
     category: getBMICategory(bmi),
   };
 };
-
