@@ -1,4 +1,4 @@
-import { type FormEvent, useMemo, useState } from 'react';
+import { type FormEvent, useEffect, useMemo, useState } from 'react';
 import { getBabyDevelopmentByWeek } from './services/babyDevelopment';
 import { calculateBMIResult, getBMICategoryLabel } from './services/bmi';
 import {
@@ -31,7 +31,6 @@ import {
   getLatestRecordForDate,
   parseWeightInput,
   QUICK_NOTES,
-  roundWeightToOneDecimal,
   upsertRecordByDate,
   type QuickNote,
   type WeightSaveFeedback,
@@ -178,6 +177,24 @@ const formatGestationalWeekText = (week: number | null) => {
   return `第 ${week} 周`;
 };
 
+const downloadBlobFile = ({
+  filename,
+  blob,
+}: {
+  filename: string;
+  blob: Blob;
+}) => {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+};
+
 const downloadTextFile = ({
   filename,
   content,
@@ -188,15 +205,31 @@ const downloadTextFile = ({
   mimeType: string;
 }) => {
   const blob = new Blob([content], { type: mimeType });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
 
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
+  downloadBlobFile({ filename, blob });
+};
+
+const shareOrDownloadTextFile = async ({
+  filename,
+  content,
+  mimeType,
+}: {
+  filename: string;
+  content: string;
+  mimeType: string;
+}) => {
+  const file = new File([content], filename, { type: mimeType });
+
+  if (navigator.canShare?.({ files: [file] })) {
+    await navigator.share({
+      files: [file],
+      title: filename,
+    });
+    return 'shared';
+  }
+
+  downloadBlobFile({ filename, blob: file });
+  return 'downloaded';
 };
 
 const downloadBinaryFile = ({
@@ -209,15 +242,8 @@ const downloadBinaryFile = ({
   mimeType: string;
 }) => {
   const blob = new Blob([content], { type: mimeType });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
 
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
+  downloadBlobFile({ filename, blob });
 };
 
 function App() {
@@ -533,23 +559,39 @@ function WeightCheckInPanel({
   records: WeightRecord[];
   onRecordCreated: (record: WeightRecord) => string | undefined;
 }) {
-  const todayRecord = getLatestRecordForDate(records);
-  const initialWeight = todayRecord?.weightKg ?? profile.preWeightKg;
-  const initialNote = QUICK_NOTES.find((note) => note === todayRecord?.note) ?? '';
-  const [weightInput, setWeightInput] = useState(formatWeightInput(initialWeight));
-  const [selectedNote, setSelectedNote] = useState<QuickNote | ''>(initialNote);
+  const todayDate = getTodayDateOnly();
+  const todayRecord = getLatestRecordForDate(records, todayDate);
+  const initialNote = todayRecord?.note ?? '';
+  const [weightInput, setWeightInput] = useState(
+    todayRecord ? formatWeightInput(todayRecord.weightKg) : '',
+  );
+  const [recordDate, setRecordDate] = useState(todayDate);
+  const [selectedNote, setSelectedNote] = useState<QuickNote | ''>(
+    QUICK_NOTES.find((note) => note === initialNote) ?? '',
+  );
+  const [customNote, setCustomNote] = useState(
+    QUICK_NOTES.some((note) => note === initialNote) ? '' : initialNote,
+  );
   const [feedback, setFeedback] = useState<WeightSaveFeedback | null>(null);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
 
+  useEffect(() => {
+    const record = getLatestRecordForDate(records, recordDate);
+    const note = record?.note ?? '';
 
-  const adjustWeight = (delta: number) => {
-    const currentWeight = parseWeightInput(weightInput) ?? initialWeight;
-    const nextWeight = Math.max(0, roundWeightToOneDecimal(currentWeight + delta));
-
-    setWeightInput(formatWeightInput(nextWeight));
+    setWeightInput(record ? formatWeightInput(record.weightKg) : '');
+    setSelectedNote(QUICK_NOTES.find((quickNote) => quickNote === note) ?? '');
+    setCustomNote(QUICK_NOTES.some((quickNote) => quickNote === note) ? '' : note);
     setFeedback(null);
+    setMessage('');
     setError('');
+  }, [recordDate]);
+
+  const buildNote = () => {
+    const trimmedCustomNote = customNote.trim();
+
+    return [selectedNote, trimmedCustomNote].filter(Boolean).join(' · ') || undefined;
   };
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
@@ -559,14 +601,20 @@ function WeightCheckInPanel({
 
     const weightKg = parseWeightInput(weightInput);
 
+    if (!isValidDateOnly(recordDate)) {
+      setError('请选择有效的记录日期。');
+      return;
+    }
+
     if (weightKg === null || weightKg < 30 || weightKg > 180) {
       setError('请填写合理的体重，最多保留 1 位小数。');
       return;
     }
 
     const record = createWeightRecord({
+      date: recordDate,
       weightKg,
-      note: selectedNote || undefined,
+      note: buildNote(),
     });
     const nextFeedback = createWeightSaveFeedback(records, record);
     const saveError = onRecordCreated(record);
@@ -578,7 +626,7 @@ function WeightCheckInPanel({
 
     setWeightInput(formatWeightInput(weightKg));
     setFeedback(nextFeedback);
-    setMessage('已保存今天的记录。');
+    setMessage(`已保存 ${recordDate} 的记录。`);
   };
 
   return (
@@ -589,24 +637,32 @@ function WeightCheckInPanel({
     >
       <div className="flex items-end justify-between gap-4">
         <div>
-          <p className="text-sm text-moss-600">今日</p>
           <h2 id="home-title" className="mt-1 text-3xl font-semibold">
             记录体重
           </h2>
         </div>
-        <p className="text-right text-sm leading-6 text-forest-700">
-          打开
-          <br />
-          记录
-          <br />
-          关闭
-        </p>
       </div>
 
       <div className="mt-6 grid gap-4">
         <div className="grid gap-2">
+          <label className="text-sm font-medium text-forest-700" htmlFor="record-date">
+            记录日期
+          </label>
+          <input
+            id="record-date"
+            className="app-input"
+            max={todayDate}
+            type="date"
+            value={recordDate}
+            onChange={(event) => {
+              setRecordDate(event.target.value);
+            }}
+          />
+        </div>
+
+        <div className="grid gap-2">
           <label className="text-sm font-medium text-forest-700" htmlFor="weight-check-in">
-            今日体重
+            体重
           </label>
           <input
             id="weight-check-in"
@@ -624,27 +680,9 @@ function WeightCheckInPanel({
           <p className="text-xs text-moss-600">单位 kg，最多 1 位小数</p>
         </div>
 
-        <div className="grid grid-cols-4 gap-2" aria-label="快速微调">
-          {[
-            { label: '-0.5', value: -0.5 },
-            { label: '-0.1', value: -0.1 },
-            { label: '+0.1', value: 0.1 },
-            { label: '+0.5', value: 0.5 },
-          ].map((item) => (
-            <button
-              key={item.label}
-              className="app-button app-button-secondary min-h-11 px-2"
-              type="button"
-              onClick={() => adjustWeight(item.value)}
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
-
         <div className="grid gap-2">
           <p className="text-sm font-medium text-forest-700">备注</p>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-2 gap-2">
             {QUICK_NOTES.map((note) => {
               const isSelected = selectedNote === note;
 
@@ -666,6 +704,18 @@ function WeightCheckInPanel({
               );
             })}
           </div>
+          <input
+            className="app-input"
+            maxLength={24}
+            placeholder="也可以自己写一句"
+            value={customNote}
+            onChange={(event) => {
+              setCustomNote(event.target.value);
+              setFeedback(null);
+              setError('');
+              setMessage('');
+            }}
+          />
         </div>
 
         {error && (
@@ -683,7 +733,7 @@ function WeightCheckInPanel({
             {feedback && (
               <div className="mt-3 grid gap-2 sm:grid-cols-3">
                 <div>
-                  <p className="text-xs text-moss-600">今日</p>
+                  <p className="text-xs text-moss-600">本次</p>
                   <p className="text-base font-semibold">{formatWeightInput(feedback.todayWeightKg)} kg</p>
                 </div>
 
@@ -809,12 +859,23 @@ function TrendPage({
   const selectedStatus = selectedPoint
     ? getWeightStatus(selectedPoint.gainKg, selectedStandardRange)
     : null;
+  const weeklyTrendRows = trendPoints.map((point, index) => {
+    const previousPoint = trendPoints[index - 1];
+    const changeFromPreviousWeek =
+      previousPoint === undefined
+        ? null
+        : Math.round((point.averageWeightKg - previousPoint.averageWeightKg) * 10) / 10;
+
+    return {
+      ...point,
+      changeFromPreviousWeek,
+    };
+  });
 
   return (
     <section className="space-y-5" aria-labelledby="trend-title">
       <div className="rounded-[24px] border border-stone-200 bg-warm-white p-5 shadow-soft">
-        <p className="text-sm text-moss-600">趋势参考</p>
-        <h2 id="trend-title" className="mt-1 text-2xl font-semibold">
+        <h2 id="trend-title" className="text-2xl font-semibold">
           增重曲线
         </h2>
         <div className="mt-6 rounded-[20px] border border-stone-200 bg-mist p-3">
@@ -1056,8 +1117,60 @@ function TrendPage({
       <div className="rounded-[20px] border border-stone-200 bg-warm-white/80 p-5">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <p className="text-sm text-moss-600">历史记录</p>
-            <h3 className="mt-1 text-xl font-semibold text-forest-900">本地体重记录</h3>
+            <h3 className="text-xl font-semibold text-forest-900">每周体重变化</h3>
+          </div>
+          {weeklyTrendRows.length > 0 && (
+            <p className="text-right text-xs leading-5 text-moss-600">
+              共 {weeklyTrendRows.length} 周
+            </p>
+          )}
+        </div>
+
+        {weeklyTrendRows.length > 0 ? (
+          <div className="mt-4 overflow-hidden rounded-[16px] border border-stone-200">
+            <div className="grid grid-cols-[0.85fr_1fr_1fr] gap-2 border-b border-stone-200 bg-mist px-3 py-2 text-xs font-medium text-moss-600">
+              <span>周数</span>
+              <span className="text-right">周均体重</span>
+              <span className="text-right">较上周</span>
+            </div>
+            <div className="divide-y divide-stone-200/80 bg-warm-white/80">
+              {weeklyTrendRows
+                .slice()
+                .reverse()
+                .map((point) => (
+                  <article
+                    key={point.week}
+                    className="grid grid-cols-[0.85fr_1fr_1fr] gap-2 px-3 py-3 text-sm"
+                  >
+                    <div>
+                      <p className="font-semibold text-forest-900">第 {point.week} 周</p>
+                      <p className="mt-1 text-xs text-moss-600">{point.recordCount} 条</p>
+                    </div>
+                    <p className="text-right font-semibold text-forest-900">
+                      {formatWeightInput(point.averageWeightKg)} kg
+                    </p>
+                    <p className="text-right font-semibold text-forest-900">
+                      {point.changeFromPreviousWeek === null
+                        ? '—'
+                        : `${point.changeFromPreviousWeek > 0 ? '+' : ''}${formatWeightInput(
+                            point.changeFromPreviousWeek,
+                          )} kg`}
+                    </p>
+                  </article>
+                ))}
+            </div>
+          </div>
+        ) : (
+          <p className="mt-3 text-sm leading-6 text-forest-700">
+            保存体重后，这里会按孕周显示周均体重和较上周的变化。
+          </p>
+        )}
+      </div>
+
+      <div className="rounded-[20px] border border-stone-200 bg-warm-white/80 p-5">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h3 className="text-xl font-semibold text-forest-900">本地体重记录</h3>
           </div>
           {recordCount > 0 && (
             <p className="text-right text-xs leading-5 text-moss-600">共 {historyRecords.length} 天</p>
@@ -1115,6 +1228,8 @@ function SettingsPage({
   const [error, setError] = useState('');
   const [exportMessage, setExportMessage] = useState('');
   const [exportError, setExportError] = useState('');
+  const [exportBackupText, setExportBackupText] = useState('');
+  const [exportBackupFilename, setExportBackupFilename] = useState('');
   const [importText, setImportText] = useState('');
   const [importPreview, setImportPreview] = useState<CsvImportPreview | null>(null);
   const [importMessage, setImportMessage] = useState('');
@@ -1181,24 +1296,55 @@ function SettingsPage({
     setMessage('个人信息已保存，孕周和趋势会按新资料更新。');
   };
 
-  const handleExportCsv = () => {
+  const handleExportCsv = async () => {
     setExportError('');
     setExportMessage('');
+    setExportBackupText('');
+    setExportBackupFilename('');
 
     if (records.length === 0) {
       setExportError('还没有体重记录，先不用导出。');
       return;
     }
 
-    const csv = buildRecordsCsv(records);
+    const csv = `\uFEFF${buildRecordsCsv(records)}`;
     const exportDate = getTodayDateOnly();
+    const filename = `pregnancy-weight-records-${exportDate}.csv`;
 
-    downloadTextFile({
-      filename: `pregnancy-weight-records-${exportDate}.csv`,
-      content: `\uFEFF${csv}`,
-      mimeType: 'text/csv;charset=utf-8',
-    });
-    setExportMessage(`已准备导出 ${getLatestHistoryRecords(records).length} 天记录。`);
+    setExportBackupText(csv);
+    setExportBackupFilename(filename);
+
+    try {
+      const result = await shareOrDownloadTextFile({
+        filename,
+        content: csv,
+        mimeType: 'text/csv;charset=utf-8',
+      });
+
+      setExportMessage(
+        result === 'shared'
+          ? `已打开系统分享面板，共 ${getLatestHistoryRecords(records).length} 天记录。`
+          : `已生成 ${getLatestHistoryRecords(records).length} 天记录。若手机没有弹出文件，请复制下方备份文本。`,
+      );
+    } catch {
+      setExportMessage(`已生成 ${getLatestHistoryRecords(records).length} 天记录。请复制下方备份文本。`);
+    }
+  };
+
+  const handleCopyExportBackup = async () => {
+    setExportError('');
+
+    if (!exportBackupText) {
+      setExportError('请先导出一次 CSV 备份。');
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(exportBackupText.replace(/^\uFEFF/, ''));
+      setExportMessage(`已复制 ${exportBackupFilename || 'CSV 备份'} 内容。`);
+    } catch {
+      setExportError('暂时无法自动复制，可以长按下方文本框手动全选复制。');
+    }
   };
 
   const handleDownloadCsvTemplate = () => {
@@ -1309,15 +1455,20 @@ function SettingsPage({
   return (
     <section className="space-y-5" aria-labelledby="settings-title">
       <div className="rounded-[24px] border border-stone-200 bg-warm-white p-5 shadow-soft">
-        <p className="text-sm text-moss-600">本地资料</p>
-        <h2 id="settings-title" className="mt-1 text-2xl font-semibold">
+        <h2 id="settings-title" className="text-2xl font-semibold">
           设置与数据
         </h2>
         <div className="mt-6 grid gap-3">
           <a className="app-button app-button-secondary grid place-items-center" href="#profile-settings">
             个人信息
           </a>
-          <button className="app-button app-button-secondary" type="button" onClick={handleExportCsv}>
+          <button
+            className="app-button app-button-secondary"
+            type="button"
+            onClick={() => {
+              void handleExportCsv();
+            }}
+          >
             导出 CSV
           </button>
           <a className="app-button app-button-secondary grid place-items-center" href="#csv-import">
@@ -1329,6 +1480,32 @@ function SettingsPage({
             {exportError || exportMessage}
           </p>
         )}
+        {exportBackupText && (
+          <div className="mt-4 grid gap-3 rounded-[16px] border border-stone-200 bg-mist p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-forest-900">CSV 备份文本</p>
+                <p className="mt-1 text-xs leading-5 text-moss-600">
+                  {exportBackupFilename || 'pregnancy-weight-records.csv'}
+                </p>
+              </div>
+              <button
+                className="app-button app-button-secondary min-h-11 px-4"
+                type="button"
+                onClick={() => {
+                  void handleCopyExportBackup();
+                }}
+              >
+                复制
+              </button>
+            </div>
+            <textarea
+              className="app-input min-h-32 py-3 text-xs leading-5"
+              readOnly
+              value={exportBackupText.replace(/^\uFEFF/, '')}
+            />
+          </div>
+        )}
       </div>
 
       <form
@@ -1337,8 +1514,7 @@ function SettingsPage({
         aria-labelledby="profile-settings-title"
         onSubmit={handleSubmit}
       >
-        <p className="text-sm text-moss-600">个人信息</p>
-        <h3 id="profile-settings-title" className="mt-1 text-xl font-semibold text-forest-900">
+        <h3 id="profile-settings-title" className="text-xl font-semibold text-forest-900">
           基础资料
         </h3>
 
@@ -1431,8 +1607,7 @@ function SettingsPage({
         id="csv-import"
         className="rounded-[24px] border border-stone-200 bg-warm-white p-5 shadow-soft"
       >
-        <p className="text-sm text-moss-600">导入数据</p>
-        <h3 className="mt-1 text-xl font-semibold text-forest-900">导入记录</h3>
+        <h3 className="text-xl font-semibold text-forest-900">导入记录</h3>
         <div className="mt-5 grid gap-4">
           <div className="grid gap-2 sm:grid-cols-2">
             <button
@@ -1532,8 +1707,7 @@ function SettingsPage({
         </div>
       </div>
       <div className="rounded-[20px] border border-stone-200 bg-warm-white/80 p-5">
-        <p className="text-sm text-moss-600">数据说明</p>
-        <h3 className="mt-1 text-xl font-semibold text-forest-900">本地保存与备份</h3>
+        <h3 className="text-xl font-semibold text-forest-900">本地保存与备份</h3>
         <div className="mt-3 grid gap-3 text-sm leading-6 text-forest-700">
           <p>
             数据仅保存在当前浏览器。当前本地资料：已填写，体重记录 {recordCount} 条。
@@ -1545,9 +1719,41 @@ function SettingsPage({
             可以隔一段时间导出 CSV，留一份自己的备份；需要恢复时，可从 CSV 或 Excel 导入。
           </p>
         </div>
-        <button className="app-button app-button-secondary mt-5 w-full" type="button" onClick={handleExportCsv}>
+        <button
+          className="app-button app-button-secondary mt-5 w-full"
+          type="button"
+          onClick={() => {
+            void handleExportCsv();
+          }}
+        >
           导出 CSV 备份
         </button>
+        {exportBackupText && (
+          <div className="mt-4 grid gap-3 rounded-[16px] border border-stone-200 bg-mist p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-forest-900">CSV 备份文本</p>
+                <p className="mt-1 text-xs leading-5 text-moss-600">
+                  {exportBackupFilename || 'pregnancy-weight-records.csv'}
+                </p>
+              </div>
+              <button
+                className="app-button app-button-secondary min-h-11 px-4"
+                type="button"
+                onClick={() => {
+                  void handleCopyExportBackup();
+                }}
+              >
+                复制
+              </button>
+            </div>
+            <textarea
+              className="app-input min-h-32 py-3 text-xs leading-5"
+              readOnly
+              value={exportBackupText.replace(/^\uFEFF/, '')}
+            />
+          </div>
+        )}
       </div>
     </section>
   );

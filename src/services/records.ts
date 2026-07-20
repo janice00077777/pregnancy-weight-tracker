@@ -1,7 +1,7 @@
 import { addDaysToDateOnly, getTodayDateOnly } from './pregnancy';
 import type { WeightRecord } from '../types/pregnancy';
 
-export const QUICK_NOTES = ['晨起空腹', '晚餐后', '浮肿日'] as const;
+export const QUICK_NOTES = ['晨起空腹', '浮肿日'] as const;
 
 export type QuickNote = (typeof QUICK_NOTES)[number];
 
