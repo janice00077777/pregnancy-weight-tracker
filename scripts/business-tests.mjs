@@ -60,7 +60,8 @@ const testPregnancyDates = async () => {
   const progress = pregnancy.calculatePregnancyProgress('2026-11-01', '2026-06-30');
 
   assert.equal(progress.gestationalDay, 156);
-  assert.equal(progress.gestationalWeek, 23);
+  assert.equal(progress.gestationalWeek, 22);
+  assert.equal(progress.gestationalDayOfWeek, 2);
   assert.equal(progress.remainingDays, 124);
   assert.equal(progress.progressPercent, 56);
   assert.equal(pregnancy.getGestationalWeekByDate('2026-11-01', '2026-11-01'), 40);

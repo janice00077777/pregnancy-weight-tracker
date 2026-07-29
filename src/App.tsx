@@ -861,6 +861,7 @@ function TrendPage({
     : null;
   const weeklyTrendRows = trendPoints.map((point, index) => {
     const previousPoint = trendPoints[index - 1];
+    const standardRange = getStandardRange(profile.bmiCategory, point.week);
     const changeFromPreviousWeek =
       previousPoint === undefined
         ? null
@@ -869,6 +870,12 @@ function TrendPage({
     return {
       ...point,
       changeFromPreviousWeek,
+      suggestedWeightRange: standardRange
+        ? {
+            minWeightKg: profile.preWeightKg + standardRange.minGainKg,
+            maxWeightKg: profile.preWeightKg + standardRange.maxGainKg,
+          }
+        : null,
     };
   });
 
@@ -1140,22 +1147,34 @@ function TrendPage({
                 .map((point) => (
                   <article
                     key={point.week}
-                    className="grid grid-cols-[0.85fr_1fr_1fr] gap-2 px-3 py-3 text-sm"
+                    className="grid gap-2 px-3 py-3 text-sm"
                   >
-                    <div>
-                      <p className="font-semibold text-forest-900">第 {point.week} 周</p>
-                      <p className="mt-1 text-xs text-moss-600">{point.recordCount} 条</p>
+                    <div className="grid grid-cols-[0.85fr_1fr_1fr] gap-2">
+                      <div>
+                        <p className="font-semibold text-forest-900">第 {point.week} 周</p>
+                        <p className="mt-1 text-xs text-moss-600">{point.recordCount} 条</p>
+                      </div>
+                      <p className="text-right font-semibold text-forest-900">
+                        {formatWeightInput(point.averageWeightKg)} kg
+                      </p>
+                      <p className="text-right font-semibold text-forest-900">
+                        {point.changeFromPreviousWeek === null
+                          ? '—'
+                          : `${point.changeFromPreviousWeek > 0 ? '+' : ''}${formatWeightInput(
+                              point.changeFromPreviousWeek,
+                            )} kg`}
+                      </p>
                     </div>
-                    <p className="text-right font-semibold text-forest-900">
-                      {formatWeightInput(point.averageWeightKg)} kg
-                    </p>
-                    <p className="text-right font-semibold text-forest-900">
-                      {point.changeFromPreviousWeek === null
-                        ? '—'
-                        : `${point.changeFromPreviousWeek > 0 ? '+' : ''}${formatWeightInput(
-                            point.changeFromPreviousWeek,
-                          )} kg`}
-                    </p>
+                    <div className="flex items-center justify-between gap-3 rounded-[12px] bg-mist px-3 py-2 text-xs text-moss-700">
+                      <span>建议体重范围</span>
+                      <span className="text-right font-semibold text-forest-800">
+                        {point.suggestedWeightRange
+                          ? `${formatWeightInput(
+                              point.suggestedWeightRange.minWeightKg,
+                            )} - ${formatWeightInput(point.suggestedWeightRange.maxWeightKg)} kg`
+                          : '暂无'}
+                      </span>
+                    </div>
                   </article>
                 ))}
             </div>

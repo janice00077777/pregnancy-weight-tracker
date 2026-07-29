@@ -116,7 +116,7 @@ export const calculatePregnancyProgress = (
 
   const gestationalDay = clamp(rawGestationalDay, 0, PREGNANCY_TOTAL_DAYS);
   const gestationalWeek = clamp(
-    Math.floor(gestationalDay / DAYS_PER_WEEK) + 1,
+    Math.floor(gestationalDay / DAYS_PER_WEEK),
     1,
     PREGNANCY_TOTAL_DAYS / DAYS_PER_WEEK,
   );
@@ -137,4 +137,3 @@ export const calculatePregnancyProgress = (
 
 export const getGestationalWeekByDate = (dueDate: string, date: string): number | null =>
   calculatePregnancyProgress(dueDate, date)?.gestationalWeek ?? null;
-
