@@ -47,6 +47,7 @@ import {
   BMI_GAIN_STANDARD_TABLE,
   getStandardRange,
   getWeightStatus,
+  WEIGHT_STANDARD_SOURCE,
   type GestationalWeightRange,
   type WeightStatus,
 } from './services/weightStandards';
@@ -1056,13 +1057,16 @@ function TrendPage({
           <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-moss-600">
             <span className="inline-flex items-center gap-2">
               <span className="h-2.5 w-5 rounded-full bg-leaf-400/45 ring-1 ring-sage-500/40" />
-              参考区间
+              估算参考带
             </span>
             <span className="inline-flex items-center gap-2">
               <span className="h-0.5 w-5 rounded-full bg-forest-800" />
               实际增重
             </span>
           </div>
+          <p className="mt-3 text-xs leading-5 text-moss-600">
+            依据 {WEIGHT_STANDARD_SOURCE.code}《{WEIGHT_STANDARD_SOURCE.title}》。逐周色带为根据标准总增重范围生成的估算轨迹，仅供观察趋势；不适用于多胎妊娠，合并症或并发症请结合产检医生意见。
+          </p>
           {selectedPoint ? (
             <div className="mt-4 rounded-[16px] border border-stone-200 bg-warm-white/85 p-4">
               <div className="flex items-start justify-between gap-3">

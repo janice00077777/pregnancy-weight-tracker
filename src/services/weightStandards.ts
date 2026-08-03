@@ -20,7 +20,8 @@ export type BMIGainStandard = {
     min: number;
     max: number;
   };
-  weeklyGainAfterWeek12Kg: {
+  weeklyGainFromSecondTrimesterKg: {
+    recommended: number;
     min: number;
     max: number;
   };
@@ -29,13 +30,13 @@ export type BMIGainStandard = {
 
 export const GESTATIONAL_WEEK_MIN = 1;
 export const GESTATIONAL_WEEK_MAX = 40;
-export const FIRST_TRIMESTER_END_WEEK = 12;
+export const FIRST_TRIMESTER_END_WEEK = 13;
 
 export const WEIGHT_STANDARD_SOURCE = {
-  code: 'WS/T 809-2022',
-  title: '孕期体重增长监测与评价',
+  code: 'WS/T 801—2022',
+  title: '妊娠期妇女体重增长推荐值标准',
   note:
-    '本表按产品架构中指定的 WS/T 809-2022 作为标准来源集中维护；上线前应以正式标准原文再次复核参数。',
+    '适用于我国妇女单胎自然妊娠；逐周累计参考带是依据标准中的孕早期和全孕期总增重范围生成的估算轨迹，并非标准原文提供的逐周界值。',
 } as const;
 
 const roundToOneDecimal = (value: number) => Math.round(value * 10) / 10;
@@ -90,6 +91,9 @@ const createBMIGainStandard = ({
   totalGainMaxKg,
   firstTrimesterMinKg = 0,
   firstTrimesterMaxKg = 2,
+  laterWeeklyRecommendedKg,
+  laterWeeklyMinKg,
+  laterWeeklyMaxKg,
 }: {
   category: BMICategory;
   bmiLabel: string;
@@ -98,6 +102,9 @@ const createBMIGainStandard = ({
   totalGainMaxKg: number;
   firstTrimesterMinKg?: number;
   firstTrimesterMaxKg?: number;
+  laterWeeklyRecommendedKg: number;
+  laterWeeklyMinKg: number;
+  laterWeeklyMaxKg: number;
 }): BMIGainStandard => {
   const laterPregnancyWeeks = GESTATIONAL_WEEK_MAX - FIRST_TRIMESTER_END_WEEK;
 
@@ -113,9 +120,10 @@ const createBMIGainStandard = ({
       min: firstTrimesterMinKg,
       max: firstTrimesterMaxKg,
     },
-    weeklyGainAfterWeek12Kg: {
-      min: roundToOneDecimal((totalGainMinKg - firstTrimesterMinKg) / laterPregnancyWeeks),
-      max: roundToOneDecimal((totalGainMaxKg - firstTrimesterMaxKg) / laterPregnancyWeeks),
+    weeklyGainFromSecondTrimesterKg: {
+      recommended: laterWeeklyRecommendedKg,
+      min: laterWeeklyMinKg,
+      max: laterWeeklyMaxKg,
     },
     weeklyRanges: buildWeeklyRanges({
       totalGainMinKg,
@@ -133,6 +141,9 @@ export const BMI_GAIN_STANDARD_TABLE: Record<BMICategory, BMIGainStandard> = {
     bmiRangeText: 'BMI < 18.5',
     totalGainMinKg: 11,
     totalGainMaxKg: 16,
+    laterWeeklyRecommendedKg: 0.46,
+    laterWeeklyMinKg: 0.37,
+    laterWeeklyMaxKg: 0.56,
   }),
   normal: createBMIGainStandard({
     category: 'normal',
@@ -140,6 +151,9 @@ export const BMI_GAIN_STANDARD_TABLE: Record<BMICategory, BMIGainStandard> = {
     bmiRangeText: '18.5 <= BMI < 24',
     totalGainMinKg: 8,
     totalGainMaxKg: 14,
+    laterWeeklyRecommendedKg: 0.37,
+    laterWeeklyMinKg: 0.26,
+    laterWeeklyMaxKg: 0.48,
   }),
   overweight: createBMIGainStandard({
     category: 'overweight',
@@ -147,6 +161,9 @@ export const BMI_GAIN_STANDARD_TABLE: Record<BMICategory, BMIGainStandard> = {
     bmiRangeText: '24 <= BMI < 28',
     totalGainMinKg: 7,
     totalGainMaxKg: 11,
+    laterWeeklyRecommendedKg: 0.3,
+    laterWeeklyMinKg: 0.22,
+    laterWeeklyMaxKg: 0.37,
   }),
   obese: createBMIGainStandard({
     category: 'obese',
@@ -154,6 +171,9 @@ export const BMI_GAIN_STANDARD_TABLE: Record<BMICategory, BMIGainStandard> = {
     bmiRangeText: 'BMI >= 28',
     totalGainMinKg: 5,
     totalGainMaxKg: 9,
+    laterWeeklyRecommendedKg: 0.22,
+    laterWeeklyMinKg: 0.15,
+    laterWeeklyMaxKg: 0.3,
   }),
 };
 
