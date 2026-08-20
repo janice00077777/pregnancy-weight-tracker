@@ -69,6 +69,9 @@ const testPregnancyDates = async () => {
 
 const testRecords = async () => {
   const records = await importService('records');
+  assert.equal(records.parseWeightInput('62.55'), 62.55);
+  assert.equal(records.parseWeightInput('62.555'), null);
+  assert.equal(records.formatWeightInput(62.5), '62.50');
   const originalRecords = [
     { date: '2026-06-29', weightKg: 61.8, note: '晨起空腹', createdAt: 1 },
     { date: '2026-06-30', weightKg: 62.5, note: '晚餐后', createdAt: 2 },
@@ -79,6 +82,8 @@ const testRecords = async () => {
   assert.equal(merged.length, 2);
   assert.deepEqual(merged[0], nextRecord);
   assert.equal(merged[1].date, '2026-06-29');
+  assert.deepEqual(records.removeRecordByDate(merged, '2026-06-30'), [originalRecords[0]]);
+  assert.deepEqual(records.removeRecordByDate(merged, '2026-07-01'), merged);
 
   const lastWeekAverage = records.calculateLastWeekAverage(
     [
@@ -97,8 +102,17 @@ const testRecords = async () => {
 
 const testStandards = async () => {
   const standards = await importService('standards');
+  const normalStandard = standards.BMI_GAIN_STANDARD_TABLE.normal;
   const normalWeek40 = standards.getStandardRange('normal', 40);
 
+  assert.equal(standards.WEIGHT_STANDARD_SOURCE.code, 'WS/T 801—2022');
+  assert.equal(standards.FIRST_TRIMESTER_END_WEEK, 13);
+  assert.deepEqual(normalStandard.firstTrimesterGainRangeKg, { min: 0, max: 2 });
+  assert.deepEqual(normalStandard.weeklyGainFromSecondTrimesterKg, {
+    recommended: 0.37,
+    min: 0.26,
+    max: 0.48,
+  });
   assert.deepEqual(normalWeek40, { week: 40, minGainKg: 8, maxGainKg: 14 });
   assert.equal(standards.getStandardRange('normal', 0), null);
   assert.equal(standards.getStandardRange('normal', 41), null);

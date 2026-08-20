@@ -12,14 +12,14 @@ export type WeightSaveFeedback = {
   sampleCount: number;
 };
 
-export const roundWeightToOneDecimal = (weight: number) => Math.round(weight * 10) / 10;
+export const roundWeightToTwoDecimals = (weight: number) => Math.round(weight * 100) / 100;
 
-export const formatWeightInput = (weight: number) => roundWeightToOneDecimal(weight).toFixed(1);
+export const formatWeightInput = (weight: number) => roundWeightToTwoDecimals(weight).toFixed(2);
 
 export const parseWeightInput = (value: string): number | null => {
   const trimmedValue = value.trim();
 
-  if (!/^\d{1,3}(\.\d)?$/.test(trimmedValue)) {
+  if (!/^\d{1,3}(\.\d{1,2})?$/.test(trimmedValue)) {
     return null;
   }
 
@@ -29,7 +29,7 @@ export const parseWeightInput = (value: string): number | null => {
     return null;
   }
 
-  return roundWeightToOneDecimal(weight);
+  return roundWeightToTwoDecimals(weight);
 };
 
 export const getLatestRecordForDate = (
@@ -57,7 +57,7 @@ export const createWeightRecord = ({
   note?: string;
 }): WeightRecord => ({
   date,
-  weightKg: roundWeightToOneDecimal(weightKg),
+  weightKg: roundWeightToTwoDecimals(weightKg),
   note,
   createdAt: Date.now(),
 });
@@ -76,6 +76,9 @@ export const upsertRecordByDate = (records: WeightRecord[], nextRecord: WeightRe
 
   return sortRecordsByDateDesc([...recordsWithoutSameDate, nextRecord]);
 };
+
+export const removeRecordByDate = (records: WeightRecord[], date: string) =>
+  records.filter((record) => record.date !== date);
 
 export const calculateLastWeekAverage = (
   records: WeightRecord[],
@@ -110,7 +113,7 @@ export const calculateLastWeekAverage = (
   const totalWeight = lastWeekRecords.reduce((sum, record) => sum + record.weightKg, 0);
 
   return {
-    averageKg: roundWeightToOneDecimal(totalWeight / lastWeekRecords.length),
+    averageKg: roundWeightToTwoDecimals(totalWeight / lastWeekRecords.length),
     sampleCount: lastWeekRecords.length,
   };
 };
@@ -133,7 +136,7 @@ export const createWeightSaveFeedback = (
   return {
     todayWeightKg: todayRecord.weightKg,
     lastWeekAverageKg: lastWeekAverage.averageKg,
-    differenceKg: roundWeightToOneDecimal(todayRecord.weightKg - lastWeekAverage.averageKg),
+    differenceKg: roundWeightToTwoDecimals(todayRecord.weightKg - lastWeekAverage.averageKg),
     sampleCount: lastWeekAverage.sampleCount,
   };
 };

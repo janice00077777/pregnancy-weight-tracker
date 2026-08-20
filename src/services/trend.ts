@@ -1,5 +1,5 @@
 import { getGestationalWeekByDate } from './pregnancy';
-import { roundWeightToOneDecimal } from './records';
+import { roundWeightToTwoDecimals } from './records';
 import type { PregnancyProfile, WeightRecord } from '../types/pregnancy';
 
 export type WeeklyWeightTrendPoint = {
@@ -62,13 +62,13 @@ export const buildWeeklyWeightTrend = (
     .sort((a, b) => a.week - b.week)
     .map(({ week, records: groupRecords }) => {
       const totalWeight = groupRecords.reduce((sum, record) => sum + record.weightKg, 0);
-      const averageWeightKg = roundWeightToOneDecimal(totalWeight / groupRecords.length);
+      const averageWeightKg = roundWeightToTwoDecimals(totalWeight / groupRecords.length);
       const sortedDates = groupRecords.map((record) => record.date).sort(compareDateAsc);
 
       return {
         week,
         averageWeightKg,
-        gainKg: roundWeightToOneDecimal(averageWeightKg - profile.preWeightKg),
+        gainKg: roundWeightToTwoDecimals(averageWeightKg - profile.preWeightKg),
         recordCount: groupRecords.length,
         startDate: sortedDates[0],
         endDate: sortedDates[sortedDates.length - 1],
