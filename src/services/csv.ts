@@ -225,7 +225,7 @@ export const parseRecordsRows = (rows: string[][]): CsvImportPreview => {
     }
 
     if (weightKg === null || weightKg < 30 || weightKg > 180) {
-      skippedRows.push({ rowNumber, reason: '体重需要在 30-180 kg 之间，最多 1 位小数' });
+      skippedRows.push({ rowNumber, reason: '体重需要在 30-180 kg 之间，最多 2 位小数' });
       return;
     }
 

@@ -69,6 +69,9 @@ const testPregnancyDates = async () => {
 
 const testRecords = async () => {
   const records = await importService('records');
+  assert.equal(records.parseWeightInput('62.55'), 62.55);
+  assert.equal(records.parseWeightInput('62.555'), null);
+  assert.equal(records.formatWeightInput(62.5), '62.50');
   const originalRecords = [
     { date: '2026-06-29', weightKg: 61.8, note: '晨起空腹', createdAt: 1 },
     { date: '2026-06-30', weightKg: 62.5, note: '晚餐后', createdAt: 2 },
@@ -79,6 +82,8 @@ const testRecords = async () => {
   assert.equal(merged.length, 2);
   assert.deepEqual(merged[0], nextRecord);
   assert.equal(merged[1].date, '2026-06-29');
+  assert.deepEqual(records.removeRecordByDate(merged, '2026-06-30'), [originalRecords[0]]);
+  assert.deepEqual(records.removeRecordByDate(merged, '2026-07-01'), merged);
 
   const lastWeekAverage = records.calculateLastWeekAverage(
     [
