@@ -812,7 +812,8 @@ function TrendPage({
   recordCount: number;
 }) {
   const trendPoints = buildWeeklyWeightTrend(records, profile);
-  const [selectedWeek, setSelectedWeek] = useState<number | null>(null);
+  const currentPregnancyWeek = calculatePregnancyProgress(profile.dueDate)?.gestationalWeek ?? null;
+  const [selectedWeek, setSelectedWeek] = useState<number | null>(currentPregnancyWeek);
   const [showAllWeeklyRows, setShowAllWeeklyRows] = useState(false);
   const [showLocalRecords, setShowLocalRecords] = useState(false);
   const [showStandardInfo, setShowStandardInfo] = useState(false);
@@ -933,7 +934,7 @@ function TrendPage({
         : Math.max(6, recordedChartPoints.length - 1);
   const chartWidth =
     chartMode === 'week'
-      ? Math.max(TREND_CHART_VIEWBOX.width, 46 + 39 * 52 + 18)
+      ? TREND_CHART_VIEWBOX.width
       : chartMode === 'day'
         ? Math.max(TREND_CHART_VIEWBOX.width, 46 + (dailyDates.length - 1) * 48 + 18)
         : Math.max(TREND_CHART_VIEWBOX.width, 46 + (recordedChartPoints.length - 1) * 72 + 18);
@@ -958,7 +959,7 @@ function TrendPage({
     secondaryLabel?: string;
   }> =
     chartMode === 'week'
-      ? Array.from({ length: 20 }, (_, index) => (index + 1) * 2).map((week) => ({
+      ? Array.from({ length: 10 }, (_, index) => (index + 1) * 4).map((week) => ({
           x: week,
           primaryLabel: String(week),
         }))
@@ -986,7 +987,7 @@ function TrendPage({
       const container = chartScrollRef.current;
 
       if (container) {
-        container.scrollLeft = container.scrollWidth;
+        container.scrollLeft = chartMode === 'week' ? 0 : container.scrollWidth;
       }
     });
 
@@ -1054,8 +1055,12 @@ function TrendPage({
         <div className="mt-5 rounded-[20px] border border-stone-200 bg-warm-white p-3">
           <div
             ref={chartScrollRef}
-            className="overflow-x-auto overscroll-x-contain pb-2"
-            aria-label="体重曲线，可左右滑动查看更早数据"
+            className={chartMode === 'week' ? 'overflow-hidden pb-2' : 'overflow-x-auto overscroll-x-contain pb-2'}
+            aria-label={
+              chartMode === 'week'
+                ? '完整孕周体重曲线'
+                : '体重曲线，可左右滑动查看更早数据'
+            }
           >
           <svg
             className="h-auto max-w-none overflow-visible"
@@ -1180,7 +1185,7 @@ function TrendPage({
               const y = chartScale.yForGain(point.weightKg);
               const isLatest = index === chartPoints.length - 1;
               const color = getWeightStatusColor(point.status);
-              const showPointLabel = isLatest;
+              const showPointLabel = chartMode !== 'week' || isLatest;
 
               return (
                 <g
@@ -1218,7 +1223,7 @@ function TrendPage({
                       fontWeight={isLatest ? '700' : '600'}
                       textAnchor="middle"
                     >
-                      {formatWeightInput(point.weightKg)}{isLatest ? ' 公斤' : ''}
+                      {formatWeightInput(point.weightKg)} 公斤
                     </text>
                   )}
                 </g>
