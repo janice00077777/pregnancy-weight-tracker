@@ -1223,7 +1223,7 @@ function TrendPage({
                       fontWeight={isLatest ? '700' : '600'}
                       textAnchor="middle"
                     >
-                      {formatWeightInput(point.weightKg)} 公斤
+                      {formatWeightInput(point.weightKg)}{isLatest ? ' kg' : ''}
                     </text>
                   )}
                 </g>
