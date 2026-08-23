@@ -1,5 +1,4 @@
 import { type FormEvent, useEffect, useMemo, useState } from 'react';
-import { getBabyDevelopmentByWeek } from './services/babyDevelopment';
 import { calculateBMIResult, getBMICategoryLabel } from './services/bmi';
 import {
   createTrendChartScale,
@@ -30,6 +29,8 @@ import {
   getLatestRecordForDate,
   parseWeightInput,
   QUICK_NOTES,
+  removeRecordByDate,
+  roundWeightToTwoDecimals,
   upsertRecordByDate,
   type QuickNote,
   type WeightSaveFeedback,
@@ -46,6 +47,7 @@ import {
   BMI_GAIN_STANDARD_TABLE,
   getStandardRange,
   getWeightStatus,
+  WEIGHT_STANDARD_SOURCE,
   type GestationalWeightRange,
   type WeightStatus,
 } from './services/weightStandards';
@@ -72,7 +74,6 @@ type WeightBandPoint = {
 type TabItem = {
   id: TabId;
   label: string;
-  description: string;
   icon: string;
 };
 
@@ -80,19 +81,16 @@ const tabs: TabItem[] = [
   {
     id: 'home',
     label: '主页',
-    description: '体重打卡',
     icon: '○',
   },
   {
     id: 'trend',
     label: '趋势',
-    description: '曲线参考',
     icon: '⌁',
   },
   {
     id: 'settings',
     label: '设置',
-    description: '资料备份',
     icon: '⋯',
   },
 ];
@@ -184,7 +182,7 @@ const getReferenceStatusNote = (status: WeightStatus | null): string | null => {
     return '如果连续多次明显偏离参考区间，可以在产检时咨询医生。';
   }
 
-  return '这里不做诊断，只帮助你安静地看见趋势。';
+  return null;
 };
 
 const formatRangeText = (range: GestationalWeightRange | null) => {
@@ -311,6 +309,17 @@ function App() {
     return undefined;
   };
 
+  const handleRecordDeleted = (date: string) => {
+    const result = saveRecords(removeRecordByDate(appData.records, date));
+
+    if (result.error) {
+      return result.error;
+    }
+
+    setAppData(loadAppData());
+    return undefined;
+  };
+
   const handleRecordsImported = (nextRecords: WeightRecord[]) => {
     const result = saveRecords(nextRecords);
 
@@ -330,8 +339,7 @@ function App() {
     <div className="min-h-dvh bg-mist text-forest-900">
       <div className="mx-auto flex min-h-dvh w-full max-w-md flex-col">
         <header className="px-5 pb-3 pt-5">
-          <p className="text-sm text-moss-600">孕期体重助手</p>
-          <h1 className="mt-1 text-2xl font-semibold leading-tight">{activeTitle}</h1>
+          <h1 className="text-2xl font-semibold leading-tight">{activeTitle}</h1>
         </header>
 
         <main className="flex-1 px-5 pb-28">
@@ -340,6 +348,7 @@ function App() {
               profile={appData.profile}
               records={appData.records}
               onRecordCreated={handleRecordCreated}
+              onRecordDeleted={handleRecordDeleted}
             />
           )}
           {activeTab === 'trend' && (
@@ -438,13 +447,9 @@ function OnboardingPage({
         aria-labelledby="onboarding-title"
       >
         <div className="rounded-[24px] border border-stone-200 bg-warm-white p-6 shadow-soft">
-          <p className="text-sm text-moss-600">首次使用</p>
-          <h1 id="onboarding-title" className="mt-1 text-3xl font-semibold leading-tight">
+          <h1 id="onboarding-title" className="text-3xl font-semibold leading-tight">
             先填一点基础资料
           </h1>
-          <p className="mt-3 text-base leading-7 text-forest-700">
-            用来计算孕周和孕前 BMI，数据只保存在当前浏览器。
-          </p>
 
           <form className="mt-7 grid gap-5" onSubmit={handleSubmit}>
             <div className="grid gap-2">
@@ -507,6 +512,8 @@ function OnboardingPage({
               </p>
             )}
 
+            <p className="text-xs leading-5 text-moss-600">数据仅保存在当前浏览器。</p>
+
             <button className="app-button" type="submit">
               保存并开始
             </button>
@@ -521,65 +528,21 @@ function HomePage({
   profile,
   records,
   onRecordCreated,
+  onRecordDeleted,
 }: {
   profile: PregnancyProfile;
   records: WeightRecord[];
   onRecordCreated: (record: WeightRecord) => string | undefined;
+  onRecordDeleted: (date: string) => string | undefined;
 }) {
   return (
     <section className="space-y-5" aria-labelledby="home-title">
-      <PregnancyProgressHeader profile={profile} />
-
       <WeightCheckInPanel
         profile={profile}
         records={records}
         onRecordCreated={onRecordCreated}
+        onRecordDeleted={onRecordDeleted}
       />
-
-      <BabyDevelopmentCard profile={profile} />
-
-      <div className="rounded-[20px] border border-stone-200 bg-warm-white/80 p-5">
-        <p className="text-sm text-moss-600">孕周进度</p>
-        <p className="mt-2 text-base leading-7 text-forest-700">
-          进度会随日期自动更新，用来安静地看见现在走到哪里。
-        </p>
-      </div>
-    </section>
-  );
-}
-
-function BabyDevelopmentCard({ profile }: { profile: PregnancyProfile }) {
-  const progress = calculatePregnancyProgress(profile.dueDate);
-  const development = progress ? getBabyDevelopmentByWeek(progress.gestationalWeek) : null;
-
-  if (!progress || !development) {
-    return (
-      <section className="rounded-[20px] border border-stone-200 bg-warm-white/80 p-5">
-        <p className="text-sm text-moss-600">宝宝本周</p>
-        <p className="mt-2 text-base leading-7 text-forest-700">
-          预产期确认后，这里会显示本周的小小发育卡片。
-        </p>
-      </section>
-    );
-  }
-
-  return (
-    <section className="rounded-[20px] border border-stone-200 bg-warm-white/80 p-5">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <p className="text-sm text-moss-600">宝宝本周</p>
-          <h2 className="mt-1 text-xl font-semibold text-forest-900">
-            第 {development.week} 周
-          </h2>
-        </div>
-        <p className="rounded-full border border-leaf-400/60 bg-mist px-3 py-1 text-xs text-moss-700">
-          发育小卡
-        </p>
-      </div>
-      <p className="mt-4 text-lg font-semibold leading-7 text-forest-900">
-        {development.sizeComparison}
-      </p>
-      <p className="mt-3 text-sm leading-6 text-forest-700">{development.note}</p>
     </section>
   );
 }
@@ -587,10 +550,12 @@ function WeightCheckInPanel({
   profile,
   records,
   onRecordCreated,
+  onRecordDeleted,
 }: {
   profile: PregnancyProfile;
   records: WeightRecord[];
   onRecordCreated: (record: WeightRecord) => string | undefined;
+  onRecordDeleted: (date: string) => string | undefined;
 }) {
   const todayDate = getTodayDateOnly();
   const todayRecord = getLatestRecordForDate(records, todayDate);
@@ -616,6 +581,9 @@ function WeightCheckInPanel({
     setWeightInput(record ? formatWeightInput(record.weightKg) : '');
     setSelectedNote(QUICK_NOTES.find((quickNote) => quickNote === note) ?? '');
     setCustomNote(QUICK_NOTES.some((quickNote) => quickNote === note) ? '' : note);
+  }, [recordDate, records]);
+
+  useEffect(() => {
     setFeedback(null);
     setMessage('');
     setError('');
@@ -640,7 +608,7 @@ function WeightCheckInPanel({
     }
 
     if (weightKg === null || weightKg < 30 || weightKg > 180) {
-      setError('请填写合理的体重，最多保留 1 位小数。');
+      setError('请填写合理的体重，最多保留 2 位小数。');
       return;
     }
 
@@ -660,6 +628,32 @@ function WeightCheckInPanel({
     setWeightInput(formatWeightInput(weightKg));
     setFeedback(nextFeedback);
     setMessage(`已保存 ${recordDate} 的记录。`);
+  };
+
+  const handleDelete = () => {
+    const record = getLatestRecordForDate(records, recordDate);
+
+    if (!record) {
+      return;
+    }
+
+    if (!window.confirm(`确定删除 ${recordDate} 的体重记录吗？删除后无法撤销。`)) {
+      return;
+    }
+
+    setError('');
+    const deleteError = onRecordDeleted(recordDate);
+
+    if (deleteError) {
+      setError(deleteError);
+      return;
+    }
+
+    setWeightInput('');
+    setSelectedNote('');
+    setCustomNote('');
+    setFeedback(null);
+    setMessage(`已删除 ${recordDate} 的记录。`);
   };
 
   return (
@@ -701,7 +695,7 @@ function WeightCheckInPanel({
             id="weight-check-in"
             className="app-input text-2xl font-semibold"
             inputMode="decimal"
-            placeholder="62.5"
+            placeholder="62.50"
             value={weightInput}
             onChange={(event) => {
               setWeightInput(event.target.value);
@@ -710,7 +704,7 @@ function WeightCheckInPanel({
               setMessage('');
             }}
           />
-          <p className="text-xs text-moss-600">单位 kg，最多 1 位小数</p>
+          <p className="text-xs text-moss-600">单位 kg，最多 2 位小数</p>
         </div>
 
         <div className="grid gap-2">
@@ -802,58 +796,17 @@ function WeightCheckInPanel({
         <button className="app-button" type="submit">
           保存记录
         </button>
+        {getLatestRecordForDate(records, recordDate) && (
+          <button
+            className="app-button app-button-secondary"
+            type="button"
+            onClick={handleDelete}
+          >
+            删除这天的记录
+          </button>
+        )}
       </div>
     </form>
-  );
-}
-
-function PregnancyProgressHeader({ profile }: { profile: PregnancyProfile }) {
-  const progress = calculatePregnancyProgress(profile.dueDate);
-
-  if (!progress) {
-    return (
-      <section className="rounded-[20px] border border-stone-200 bg-warm-white/80 p-4">
-        <p className="text-sm text-moss-600">孕周进度</p>
-        <p className="mt-2 text-base leading-7 text-forest-700">
-          预产期暂时无法计算，可以稍后在设置里调整。
-        </p>
-      </section>
-    );
-  }
-
-  return (
-    <section
-      className="rounded-[20px] border border-stone-200 bg-warm-white/80 p-4"
-      aria-label="孕周进度"
-    >
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <p className="text-sm text-moss-600">孕周进度</p>
-          <p className="mt-1 text-2xl font-semibold text-forest-900">
-            第 {progress.gestationalWeek} 周
-          </p>
-        </div>
-        <div className="text-right text-sm leading-6 text-forest-700">
-          <p>孕 {progress.gestationalDay} 天</p>
-          <p>剩余 {progress.remainingDays} 天</p>
-        </div>
-      </div>
-
-      <div
-        className="mt-4 h-2 overflow-hidden rounded-full bg-stone-200"
-        role="progressbar"
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={progress.progressPercent}
-        aria-label="280 天进度"
-      >
-        <div
-          className="h-full rounded-full bg-sage-500"
-          style={{ width: `${progress.progressPercent}%` }}
-        />
-      </div>
-      <p className="mt-2 text-xs text-moss-600">280 天进度 {progress.progressPercent}%</p>
-    </section>
   );
 }
 
@@ -868,6 +821,9 @@ function TrendPage({
 }) {
   const trendPoints = buildWeeklyWeightTrend(records, profile);
   const [selectedWeek, setSelectedWeek] = useState<number | null>(null);
+  const [showAllWeeklyRows, setShowAllWeeklyRows] = useState(false);
+  const [showLocalRecords, setShowLocalRecords] = useState(false);
+  const [showStandardInfo, setShowStandardInfo] = useState(false);
   const [chartMode, setChartMode] = useState<WeightChartMode>('week');
   const standardRanges = BMI_GAIN_STANDARD_TABLE[profile.bmiCategory].weeklyRanges;
   const historyRecords = getLatestHistoryRecords(records);
@@ -982,7 +938,7 @@ function TrendPage({
   const weightLinePath = buildWeightLinePath(chartPoints, chartScale);
   const yTickStep = (maxChartWeight - minChartWeight) / 4;
   const weightTicks = Array.from({ length: 5 }, (_, index) =>
-    Number((minChartWeight + index * yTickStep).toFixed(2)),
+    roundWeightToTwoDecimals(minChartWeight + index * yTickStep),
   );
   const xTicks: Array<{
     x: number;
@@ -1022,7 +978,7 @@ function TrendPage({
     const changeFromPreviousWeek =
       previousPoint === undefined
         ? null
-        : Math.round((point.averageWeightKg - previousPoint.averageWeightKg) * 10) / 10;
+        : roundWeightToTwoDecimals(point.averageWeightKg - previousPoint.averageWeightKg);
 
     return {
       ...point,
@@ -1033,8 +989,12 @@ function TrendPage({
             maxWeightKg: profile.preWeightKg + standardRange.maxGainKg,
           }
         : null,
-    };
+      };
   });
+  const weeklyTrendRowsDesc = weeklyTrendRows.slice().reverse();
+  const visibleWeeklyTrendRows = showAllWeeklyRows
+    ? weeklyTrendRowsDesc
+    : weeklyTrendRowsDesc.slice(0, 2);
 
   return (
     <section className="space-y-5" aria-labelledby="trend-title">
@@ -1259,12 +1219,25 @@ function TrendPage({
               偏高
             </span>
           </div>
+          <button
+            className="mt-3 text-xs font-medium text-moss-700 underline decoration-stone-300 underline-offset-4"
+            type="button"
+            aria-expanded={showStandardInfo}
+            aria-controls="weight-standard-info"
+            onClick={() => setShowStandardInfo((current) => !current)}
+          >
+            参考标准：{WEIGHT_STANDARD_SOURCE.code} {showStandardInfo ? '收起' : 'ⓘ'}
+          </button>
+          {showStandardInfo && (
+            <p id="weight-standard-info" className="mt-2 text-xs leading-5 text-moss-600">
+              《{WEIGHT_STANDARD_SOURCE.title}》。逐周色带是根据标准总增重范围生成的估算轨迹，仅供观察趋势；不适用于多胎妊娠，合并症或并发症请结合产检医生意见。
+            </p>
+          )}
           {selectedPoint ? (
             <div className="mt-4 rounded-[16px] border border-stone-200 bg-warm-white/85 p-4">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <p className="text-sm text-moss-600">周详情</p>
-                  <h3 className="mt-1 text-xl font-semibold text-forest-900">
+                  <h3 className="text-xl font-semibold text-forest-900">
                     第 {selectedPoint.week} 周
                   </h3>
                 </div>
@@ -1303,15 +1276,17 @@ function TrendPage({
                   <p className="mt-1 font-semibold text-forest-900">
                     {getReferenceStatusText(selectedStatus)}
                   </p>
-                  <p className="mt-1 text-xs leading-5 text-moss-600">
-                    {getReferenceStatusNote(selectedStatus)}
-                  </p>
+                  {getReferenceStatusNote(selectedStatus) && (
+                    <p className="mt-1 text-xs leading-5 text-moss-600">
+                      {getReferenceStatusNote(selectedStatus)}
+                    </p>
+                  )}
                 </div>
               </div>
             </div>
           ) : (
             <p className="mt-3 text-center text-sm leading-6 text-forest-700">
-              保存体重后，这里会安静地出现趋势点。
+              暂无趋势数据
             </p>
           )}
         </div>
@@ -1322,11 +1297,22 @@ function TrendPage({
           <div>
             <h3 className="text-xl font-semibold text-forest-900">每周体重变化</h3>
           </div>
-          {weeklyTrendRows.length > 0 && (
-            <p className="text-right text-xs leading-5 text-moss-600">
-              共 {weeklyTrendRows.length} 周
-            </p>
-          )}
+          <div className="text-right">
+            {weeklyTrendRows.length > 0 && (
+              <p className="text-xs leading-5 text-moss-600">共 {weeklyTrendRows.length} 周</p>
+            )}
+            {weeklyTrendRows.length > 2 && (
+              <button
+                className="mt-1 text-sm font-medium text-forest-700 underline decoration-stone-300 underline-offset-4"
+                type="button"
+                aria-expanded={showAllWeeklyRows}
+                aria-controls="weekly-weight-rows"
+                onClick={() => setShowAllWeeklyRows((current) => !current)}
+              >
+                {showAllWeeklyRows ? '收起' : '查看全部'}
+              </button>
+            )}
+          </div>
         </div>
 
         {weeklyTrendRows.length > 0 ? (
@@ -1336,11 +1322,8 @@ function TrendPage({
               <span className="text-right">周均体重</span>
               <span className="text-right">较上周</span>
             </div>
-            <div className="divide-y divide-stone-200/80 bg-warm-white/80">
-              {weeklyTrendRows
-                .slice()
-                .reverse()
-                .map((point) => (
+            <div id="weekly-weight-rows" className="divide-y divide-stone-200/80 bg-warm-white/80">
+              {visibleWeeklyTrendRows.map((point) => (
                   <article
                     key={point.week}
                     className="grid gap-2 px-3 py-3 text-sm"
@@ -1377,7 +1360,7 @@ function TrendPage({
           </div>
         ) : (
           <p className="mt-3 text-sm leading-6 text-forest-700">
-            保存体重后，这里会按孕周显示周均体重和较上周的变化。
+            暂无每周数据
           </p>
         )}
       </div>
@@ -1387,13 +1370,26 @@ function TrendPage({
           <div>
             <h3 className="text-xl font-semibold text-forest-900">本地体重记录</h3>
           </div>
-          {recordCount > 0 && (
-            <p className="text-right text-xs leading-5 text-moss-600">共 {historyRecords.length} 天</p>
-          )}
+          <div className="text-right">
+            {recordCount > 0 && (
+              <p className="text-xs leading-5 text-moss-600">共 {historyRecords.length} 天</p>
+            )}
+            {historyRecords.length > 0 && (
+              <button
+                className="mt-1 text-sm font-medium text-forest-700 underline decoration-stone-300 underline-offset-4"
+                type="button"
+                aria-expanded={showLocalRecords}
+                aria-controls="local-weight-records"
+                onClick={() => setShowLocalRecords((current) => !current)}
+              >
+                {showLocalRecords ? '收起' : '展开记录'}
+              </button>
+            )}
+          </div>
         </div>
 
-        {historyRecords.length > 0 ? (
-          <div className="mt-4 divide-y divide-stone-200/80">
+        {historyRecords.length > 0 && showLocalRecords ? (
+          <div id="local-weight-records" className="mt-4 divide-y divide-stone-200/80">
             {historyRecords.map((record) => {
               const gestationalWeek = getGestationalWeekByDate(profile.dueDate, record.date);
 
@@ -1413,11 +1409,11 @@ function TrendPage({
               );
             })}
           </div>
-        ) : (
+        ) : historyRecords.length === 0 ? (
           <p className="mt-3 text-sm leading-6 text-forest-700">
-            保存体重后，记录会按日期倒序安静地放在这里。
+            暂无记录
           </p>
-        )}
+        ) : null}
       </div>
     </section>
   );
@@ -1668,12 +1664,9 @@ function SettingsPage({
   };
 
   return (
-    <section className="space-y-5" aria-labelledby="settings-title">
+    <section className="space-y-5" aria-label="设置与数据">
       <div className="rounded-[24px] border border-stone-200 bg-warm-white p-5 shadow-soft">
-        <h2 id="settings-title" className="text-2xl font-semibold">
-          设置与数据
-        </h2>
-        <div className="mt-6 grid gap-3">
+        <div className="grid gap-3">
           <a className="app-button app-button-secondary grid place-items-center" href="#profile-settings">
             个人信息
           </a>
@@ -1923,17 +1916,9 @@ function SettingsPage({
       </div>
       <div className="rounded-[20px] border border-stone-200 bg-warm-white/80 p-5">
         <h3 className="text-xl font-semibold text-forest-900">本地保存与备份</h3>
-        <div className="mt-3 grid gap-3 text-sm leading-6 text-forest-700">
-          <p>
-            数据仅保存在当前浏览器。当前本地资料：已填写，体重记录 {recordCount} 条。
-          </p>
-          <p>
-            如果清理浏览器数据、更换设备，或使用隐私模式，本地记录可能不会继续保留。
-          </p>
-          <p>
-            可以隔一段时间导出 CSV，留一份自己的备份；需要恢复时，可从 CSV 或 Excel 导入。
-          </p>
-        </div>
+        <p className="mt-3 text-sm leading-6 text-forest-700">
+          数据仅保存在当前浏览器，现有 {recordCount} 条记录。更换设备或清理浏览器数据前，建议导出备份。
+        </p>
         <button
           className="app-button app-button-secondary mt-5 w-full"
           type="button"
@@ -1999,7 +1984,6 @@ function BottomTabs({
                 {tab.icon}
               </span>
               <span className="text-sm font-semibold leading-none">{tab.label}</span>
-              <span className="text-[11px] leading-none text-moss-600">{tab.description}</span>
             </button>
           );
         })}
