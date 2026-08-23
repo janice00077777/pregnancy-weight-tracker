@@ -1,11 +1,10 @@
 import { type FormEvent, useEffect, useMemo, useState } from 'react';
+import { getBabyDevelopmentByWeek } from './services/babyDevelopment';
 import { calculateBMIResult, getBMICategoryLabel } from './services/bmi';
 import {
   createTrendChartScale,
   type TrendChartScale,
-  TREND_CHART_GAIN_TICKS,
   TREND_CHART_VIEWBOX,
-  TREND_CHART_WEEK_TICKS,
 } from './services/chart';
 import {
   buildImportTemplateCsv,
@@ -18,6 +17,7 @@ import {
   type CsvImportPreview,
 } from './services/csv';
 import {
+  addDaysToDateOnly,
   calculatePregnancyProgress,
   getGestationalWeekByDate,
   getTodayDateOnly,
@@ -30,8 +30,6 @@ import {
   getLatestRecordForDate,
   parseWeightInput,
   QUICK_NOTES,
-  removeRecordByDate,
-  roundWeightToTwoDecimals,
   upsertRecordByDate,
   type QuickNote,
   type WeightSaveFeedback,
@@ -48,17 +46,33 @@ import {
   BMI_GAIN_STANDARD_TABLE,
   getStandardRange,
   getWeightStatus,
-  WEIGHT_STANDARD_SOURCE,
   type GestationalWeightRange,
   type WeightStatus,
 } from './services/weightStandards';
 import type { PregnancyProfile, WeightRecord } from './types/pregnancy';
 
 type TabId = 'home' | 'trend' | 'settings';
+type WeightChartMode = 'day' | 'week' | 'records';
+
+type WeightChartPoint = {
+  x: number;
+  week: number;
+  weightKg: number;
+  primaryLabel: string;
+  secondaryLabel?: string;
+  status: WeightStatus | null;
+};
+
+type WeightBandPoint = {
+  x: number;
+  minWeightKg: number;
+  maxWeightKg: number;
+};
 
 type TabItem = {
   id: TabId;
   label: string;
+  description: string;
   icon: string;
 };
 
@@ -66,16 +80,19 @@ const tabs: TabItem[] = [
   {
     id: 'home',
     label: '主页',
+    description: '体重打卡',
     icon: '○',
   },
   {
     id: 'trend',
     label: '趋势',
+    description: '曲线参考',
     icon: '⌁',
   },
   {
     id: 'settings',
     label: '设置',
+    description: '资料备份',
     icon: '⋯',
   },
 ];
@@ -92,8 +109,8 @@ const loadAppData = () => {
 };
 const formatChartPoint = (x: number, y: number) => `${x.toFixed(1)},${y.toFixed(1)}`;
 
-const buildTrendLinePath = (
-  points: { week: number; gainKg: number }[],
+const buildWeightLinePath = (
+  points: WeightChartPoint[],
   chartScale: TrendChartScale,
 ) =>
   points
@@ -101,28 +118,28 @@ const buildTrendLinePath = (
       const command = index === 0 ? 'M' : 'L';
 
       return `${command} ${formatChartPoint(
-        chartScale.xForWeek(point.week),
-        chartScale.yForGain(point.gainKg),
+        chartScale.xForWeek(point.x),
+        chartScale.yForGain(point.weightKg),
       )}`;
     })
     .join(' ');
 
-const buildStandardRangeBandPath = (
-  weeklyRanges: { week: number; minGainKg: number; maxGainKg: number }[],
+const buildWeightBandPath = (
+  points: WeightBandPoint[],
   chartScale: TrendChartScale,
 ) => {
-  if (weeklyRanges.length === 0) {
+  if (points.length === 0) {
     return '';
   }
 
-  const upperPoints = weeklyRanges.map((range) =>
-    formatChartPoint(chartScale.xForWeek(range.week), chartScale.yForGain(range.maxGainKg)),
+  const upperPoints = points.map((point) =>
+    formatChartPoint(chartScale.xForWeek(point.x), chartScale.yForGain(point.maxWeightKg)),
   );
-  const lowerPoints = weeklyRanges
+  const lowerPoints = points
     .slice()
     .reverse()
-    .map((range) =>
-      formatChartPoint(chartScale.xForWeek(range.week), chartScale.yForGain(range.minGainKg)),
+    .map((point) =>
+      formatChartPoint(chartScale.xForWeek(point.x), chartScale.yForGain(point.minWeightKg)),
     );
 
   return `M ${upperPoints.join(' L ')} L ${lowerPoints.join(' L ')} Z`;
@@ -144,12 +161,30 @@ const getReferenceStatusText = (status: WeightStatus | null) => {
   return '暂无参考状态';
 };
 
+const getWeightStatusColor = (status: WeightStatus | null) => {
+  if (status === 'low') {
+    return '#3498db';
+  }
+
+  if (status === 'high') {
+    return '#f5a623';
+  }
+
+  return '#00bfa5';
+};
+
+const formatMonthDay = (date: string) => {
+  const [, month, day] = date.split('-').map(Number);
+
+  return `${month}/${day}`;
+};
+
 const getReferenceStatusNote = (status: WeightStatus | null): string | null => {
   if (status === 'low' || status === 'high') {
     return '如果连续多次明显偏离参考区间，可以在产检时咨询医生。';
   }
 
-  return null;
+  return '这里不做诊断，只帮助你安静地看见趋势。';
 };
 
 const formatRangeText = (range: GestationalWeightRange | null) => {
@@ -276,17 +311,6 @@ function App() {
     return undefined;
   };
 
-  const handleRecordDeleted = (date: string) => {
-    const result = saveRecords(removeRecordByDate(appData.records, date));
-
-    if (result.error) {
-      return result.error;
-    }
-
-    setAppData(loadAppData());
-    return undefined;
-  };
-
   const handleRecordsImported = (nextRecords: WeightRecord[]) => {
     const result = saveRecords(nextRecords);
 
@@ -306,7 +330,8 @@ function App() {
     <div className="min-h-dvh bg-mist text-forest-900">
       <div className="mx-auto flex min-h-dvh w-full max-w-md flex-col">
         <header className="px-5 pb-3 pt-5">
-          <h1 className="text-2xl font-semibold leading-tight">{activeTitle}</h1>
+          <p className="text-sm text-moss-600">孕期体重助手</p>
+          <h1 className="mt-1 text-2xl font-semibold leading-tight">{activeTitle}</h1>
         </header>
 
         <main className="flex-1 px-5 pb-28">
@@ -315,7 +340,6 @@ function App() {
               profile={appData.profile}
               records={appData.records}
               onRecordCreated={handleRecordCreated}
-              onRecordDeleted={handleRecordDeleted}
             />
           )}
           {activeTab === 'trend' && (
@@ -414,9 +438,13 @@ function OnboardingPage({
         aria-labelledby="onboarding-title"
       >
         <div className="rounded-[24px] border border-stone-200 bg-warm-white p-6 shadow-soft">
-          <h1 id="onboarding-title" className="text-3xl font-semibold leading-tight">
+          <p className="text-sm text-moss-600">首次使用</p>
+          <h1 id="onboarding-title" className="mt-1 text-3xl font-semibold leading-tight">
             先填一点基础资料
           </h1>
+          <p className="mt-3 text-base leading-7 text-forest-700">
+            用来计算孕周和孕前 BMI，数据只保存在当前浏览器。
+          </p>
 
           <form className="mt-7 grid gap-5" onSubmit={handleSubmit}>
             <div className="grid gap-2">
@@ -479,8 +507,6 @@ function OnboardingPage({
               </p>
             )}
 
-            <p className="text-xs leading-5 text-moss-600">数据仅保存在当前浏览器。</p>
-
             <button className="app-button" type="submit">
               保存并开始
             </button>
@@ -495,12 +521,10 @@ function HomePage({
   profile,
   records,
   onRecordCreated,
-  onRecordDeleted,
 }: {
   profile: PregnancyProfile;
   records: WeightRecord[];
   onRecordCreated: (record: WeightRecord) => string | undefined;
-  onRecordDeleted: (date: string) => string | undefined;
 }) {
   return (
     <section className="space-y-5" aria-labelledby="home-title">
@@ -510,8 +534,52 @@ function HomePage({
         profile={profile}
         records={records}
         onRecordCreated={onRecordCreated}
-        onRecordDeleted={onRecordDeleted}
       />
+
+      <BabyDevelopmentCard profile={profile} />
+
+      <div className="rounded-[20px] border border-stone-200 bg-warm-white/80 p-5">
+        <p className="text-sm text-moss-600">孕周进度</p>
+        <p className="mt-2 text-base leading-7 text-forest-700">
+          进度会随日期自动更新，用来安静地看见现在走到哪里。
+        </p>
+      </div>
+    </section>
+  );
+}
+
+function BabyDevelopmentCard({ profile }: { profile: PregnancyProfile }) {
+  const progress = calculatePregnancyProgress(profile.dueDate);
+  const development = progress ? getBabyDevelopmentByWeek(progress.gestationalWeek) : null;
+
+  if (!progress || !development) {
+    return (
+      <section className="rounded-[20px] border border-stone-200 bg-warm-white/80 p-5">
+        <p className="text-sm text-moss-600">宝宝本周</p>
+        <p className="mt-2 text-base leading-7 text-forest-700">
+          预产期确认后，这里会显示本周的小小发育卡片。
+        </p>
+      </section>
+    );
+  }
+
+  return (
+    <section className="rounded-[20px] border border-stone-200 bg-warm-white/80 p-5">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <p className="text-sm text-moss-600">宝宝本周</p>
+          <h2 className="mt-1 text-xl font-semibold text-forest-900">
+            第 {development.week} 周
+          </h2>
+        </div>
+        <p className="rounded-full border border-leaf-400/60 bg-mist px-3 py-1 text-xs text-moss-700">
+          发育小卡
+        </p>
+      </div>
+      <p className="mt-4 text-lg font-semibold leading-7 text-forest-900">
+        {development.sizeComparison}
+      </p>
+      <p className="mt-3 text-sm leading-6 text-forest-700">{development.note}</p>
     </section>
   );
 }
@@ -519,12 +587,10 @@ function WeightCheckInPanel({
   profile,
   records,
   onRecordCreated,
-  onRecordDeleted,
 }: {
   profile: PregnancyProfile;
   records: WeightRecord[];
   onRecordCreated: (record: WeightRecord) => string | undefined;
-  onRecordDeleted: (date: string) => string | undefined;
 }) {
   const todayDate = getTodayDateOnly();
   const todayRecord = getLatestRecordForDate(records, todayDate);
@@ -550,9 +616,6 @@ function WeightCheckInPanel({
     setWeightInput(record ? formatWeightInput(record.weightKg) : '');
     setSelectedNote(QUICK_NOTES.find((quickNote) => quickNote === note) ?? '');
     setCustomNote(QUICK_NOTES.some((quickNote) => quickNote === note) ? '' : note);
-  }, [recordDate, records]);
-
-  useEffect(() => {
     setFeedback(null);
     setMessage('');
     setError('');
@@ -577,7 +640,7 @@ function WeightCheckInPanel({
     }
 
     if (weightKg === null || weightKg < 30 || weightKg > 180) {
-      setError('请填写合理的体重，最多保留 2 位小数。');
+      setError('请填写合理的体重，最多保留 1 位小数。');
       return;
     }
 
@@ -597,32 +660,6 @@ function WeightCheckInPanel({
     setWeightInput(formatWeightInput(weightKg));
     setFeedback(nextFeedback);
     setMessage(`已保存 ${recordDate} 的记录。`);
-  };
-
-  const handleDelete = () => {
-    const record = getLatestRecordForDate(records, recordDate);
-
-    if (!record) {
-      return;
-    }
-
-    if (!window.confirm(`确定删除 ${recordDate} 的体重记录吗？删除后无法撤销。`)) {
-      return;
-    }
-
-    setError('');
-    const deleteError = onRecordDeleted(recordDate);
-
-    if (deleteError) {
-      setError(deleteError);
-      return;
-    }
-
-    setWeightInput('');
-    setSelectedNote('');
-    setCustomNote('');
-    setFeedback(null);
-    setMessage(`已删除 ${recordDate} 的记录。`);
   };
 
   return (
@@ -664,7 +701,7 @@ function WeightCheckInPanel({
             id="weight-check-in"
             className="app-input text-2xl font-semibold"
             inputMode="decimal"
-            placeholder="62.50"
+            placeholder="62.5"
             value={weightInput}
             onChange={(event) => {
               setWeightInput(event.target.value);
@@ -673,7 +710,7 @@ function WeightCheckInPanel({
               setMessage('');
             }}
           />
-          <p className="text-xs text-moss-600">单位 kg，最多 2 位小数</p>
+          <p className="text-xs text-moss-600">单位 kg，最多 1 位小数</p>
         </div>
 
         <div className="grid gap-2">
@@ -765,15 +802,6 @@ function WeightCheckInPanel({
         <button className="app-button" type="submit">
           保存记录
         </button>
-        {getLatestRecordForDate(records, recordDate) && (
-          <button
-            className="app-button app-button-secondary"
-            type="button"
-            onClick={handleDelete}
-          >
-            删除这天的记录
-          </button>
-        )}
       </div>
     </form>
   );
@@ -785,7 +813,10 @@ function PregnancyProgressHeader({ profile }: { profile: PregnancyProfile }) {
   if (!progress) {
     return (
       <section className="rounded-[20px] border border-stone-200 bg-warm-white/80 p-4">
-        <p className="text-base leading-7 text-forest-700">预产期暂时无法计算，请在设置中调整。</p>
+        <p className="text-sm text-moss-600">孕周进度</p>
+        <p className="mt-2 text-base leading-7 text-forest-700">
+          预产期暂时无法计算，可以稍后在设置里调整。
+        </p>
       </section>
     );
   }
@@ -797,7 +828,8 @@ function PregnancyProgressHeader({ profile }: { profile: PregnancyProfile }) {
     >
       <div className="flex items-start justify-between gap-4">
         <div>
-          <p className="text-2xl font-semibold text-forest-900">
+          <p className="text-sm text-moss-600">孕周进度</p>
+          <p className="mt-1 text-2xl font-semibold text-forest-900">
             第 {progress.gestationalWeek} 周
           </p>
         </div>
@@ -820,6 +852,7 @@ function PregnancyProgressHeader({ profile }: { profile: PregnancyProfile }) {
           style={{ width: `${progress.progressPercent}%` }}
         />
       </div>
+      <p className="mt-2 text-xs text-moss-600">280 天进度 {progress.progressPercent}%</p>
     </section>
   );
 }
@@ -835,25 +868,146 @@ function TrendPage({
 }) {
   const trendPoints = buildWeeklyWeightTrend(records, profile);
   const [selectedWeek, setSelectedWeek] = useState<number | null>(null);
-  const [showAllWeeklyRows, setShowAllWeeklyRows] = useState(false);
-  const [showLocalRecords, setShowLocalRecords] = useState(false);
-  const [showStandardInfo, setShowStandardInfo] = useState(false);
+  const [chartMode, setChartMode] = useState<WeightChartMode>('week');
   const standardRanges = BMI_GAIN_STANDARD_TABLE[profile.bmiCategory].weeklyRanges;
-  const standardGains = standardRanges.flatMap((range) => [range.minGainKg, range.maxGainKg]);
-  const actualGains = trendPoints.map((point) => point.gainKg);
-  const highestGain = Math.max(16, ...standardGains, ...actualGains);
-  const lowestGain = Math.min(0, ...standardGains, ...actualGains);
+  const historyRecords = getLatestHistoryRecords(records);
+  const historyRecordsAsc = historyRecords.slice().reverse();
+  const todayDate = getTodayDateOnly();
+  const recentDates = Array.from({ length: 7 }, (_, index) =>
+    addDaysToDateOnly(todayDate, index - 6),
+  ).filter((date): date is string => date !== null);
+
+  const createChartPoint = ({
+    x,
+    week,
+    weightKg,
+    primaryLabel,
+    secondaryLabel,
+  }: Omit<WeightChartPoint, 'status'>): WeightChartPoint => {
+    const standardRange = getStandardRange(profile.bmiCategory, week);
+
+    return {
+      x,
+      week,
+      weightKg,
+      primaryLabel,
+      secondaryLabel,
+      status: getWeightStatus(weightKg - profile.preWeightKg, standardRange),
+    };
+  };
+
+  const weeklyChartPoints = trendPoints.map((point) =>
+    createChartPoint({
+      x: point.week,
+      week: point.week,
+      weightKg: point.averageWeightKg,
+      primaryLabel: String(point.week),
+    }),
+  );
+  const dailyChartPoints = recentDates.flatMap((date, index) => {
+    const record = getLatestRecordForDate(records, date);
+    const progress = calculatePregnancyProgress(profile.dueDate, date);
+
+    if (!record || !progress) {
+      return [];
+    }
+
+    return [
+      createChartPoint({
+        x: index,
+        week: progress.gestationalWeek,
+        weightKg: record.weightKg,
+        primaryLabel: date === todayDate ? '今天' : formatMonthDay(date),
+        secondaryLabel: `${progress.gestationalWeek}周${progress.gestationalDayOfWeek}天`,
+      }),
+    ];
+  });
+  const recordedChartPoints = historyRecordsAsc.slice(-7).map((record, index) => {
+    const progress = calculatePregnancyProgress(profile.dueDate, record.date);
+
+    return createChartPoint({
+      x: index,
+      week: progress?.gestationalWeek ?? 1,
+      weightKg: record.weightKg,
+      primaryLabel: record.date === todayDate ? '今天' : formatMonthDay(record.date),
+      secondaryLabel: progress
+        ? `${progress.gestationalWeek}周${progress.gestationalDayOfWeek}天`
+        : undefined,
+    });
+  });
+  const chartPoints =
+    chartMode === 'week'
+      ? weeklyChartPoints
+      : chartMode === 'day'
+        ? dailyChartPoints
+        : recordedChartPoints;
+  const chartBandPoints: WeightBandPoint[] =
+    chartMode === 'records'
+      ? []
+      : chartMode === 'week'
+        ? standardRanges.map((range) => ({
+            x: range.week,
+            minWeightKg: profile.preWeightKg + range.minGainKg,
+            maxWeightKg: profile.preWeightKg + range.maxGainKg,
+          }))
+        : recentDates.flatMap((date, index) => {
+            const week = getGestationalWeekByDate(profile.dueDate, date);
+            const range = week ? getStandardRange(profile.bmiCategory, week) : null;
+
+            return range
+              ? [{
+                  x: index,
+                  minWeightKg: profile.preWeightKg + range.minGainKg,
+                  maxWeightKg: profile.preWeightKg + range.maxGainKg,
+                }]
+              : [];
+          });
+  const allChartWeights = [
+    ...chartPoints.map((point) => point.weightKg),
+    ...chartBandPoints.flatMap((point) => [point.minWeightKg, point.maxWeightKg]),
+    profile.preWeightKg,
+  ];
+  const minChartWeight = Math.floor(Math.min(...allChartWeights) - 2);
+  const maxChartWeight = Math.ceil(Math.max(...allChartWeights) + 2);
+  const xDomainMax = chartMode === 'week' ? 40 : Math.max(6, chartPoints.length - 1);
   const chartScale = createTrendChartScale({
     domain: {
-      minWeek: 1,
-      maxWeek: 40,
-      minGainKg: Math.floor(lowestGain),
-      maxGainKg: Math.ceil(highestGain),
+      minWeek: chartMode === 'week' ? 1 : 0,
+      maxWeek: xDomainMax,
+      minGainKg: minChartWeight,
+      maxGainKg: maxChartWeight,
     },
   });
-  const standardBandPath = buildStandardRangeBandPath(standardRanges, chartScale);
-  const trendLinePath = buildTrendLinePath(trendPoints, chartScale);
-  const historyRecords = getLatestHistoryRecords(records);
+  const chartBandPath = buildWeightBandPath(chartBandPoints, chartScale);
+  const weightLinePath = buildWeightLinePath(chartPoints, chartScale);
+  const yTickStep = (maxChartWeight - minChartWeight) / 4;
+  const weightTicks = Array.from({ length: 5 }, (_, index) =>
+    Number((minChartWeight + index * yTickStep).toFixed(2)),
+  );
+  const xTicks: Array<{
+    x: number;
+    primaryLabel: string;
+    secondaryLabel?: string;
+  }> =
+    chartMode === 'week'
+      ? [4, 12, 20, 28, 36, 40].map((week) => ({ x: week, primaryLabel: String(week) }))
+      : chartMode === 'day'
+        ? recentDates.map((date, index) => {
+            const progress = calculatePregnancyProgress(profile.dueDate, date);
+
+            return {
+              x: index,
+              primaryLabel: date === todayDate ? '今天' : formatMonthDay(date),
+              secondaryLabel: progress
+                ? `${progress.gestationalWeek}周${progress.gestationalDayOfWeek}天`
+                : undefined,
+            };
+          })
+        : recordedChartPoints.map((point) => ({
+            x: point.x,
+            primaryLabel: point.primaryLabel,
+            secondaryLabel: point.secondaryLabel,
+          }));
   const selectedPoint =
     trendPoints.find((point) => point.week === selectedWeek) ?? trendPoints[trendPoints.length - 1];
   const selectedStandardRange = selectedPoint
@@ -868,7 +1022,7 @@ function TrendPage({
     const changeFromPreviousWeek =
       previousPoint === undefined
         ? null
-        : roundWeightToTwoDecimals(point.averageWeightKg - previousPoint.averageWeightKg);
+        : Math.round((point.averageWeightKg - previousPoint.averageWeightKg) * 10) / 10;
 
     return {
       ...point,
@@ -879,29 +1033,46 @@ function TrendPage({
             maxWeightKg: profile.preWeightKg + standardRange.maxGainKg,
           }
         : null,
-      };
+    };
   });
-  const weeklyTrendRowsDesc = weeklyTrendRows.slice().reverse();
-  const visibleWeeklyTrendRows = showAllWeeklyRows
-    ? weeklyTrendRowsDesc
-    : weeklyTrendRowsDesc.slice(0, 2);
 
   return (
     <section className="space-y-5" aria-labelledby="trend-title">
       <div className="rounded-[24px] border border-stone-200 bg-warm-white p-5 shadow-soft">
-        <h2 id="trend-title" className="text-2xl font-semibold">
-          增重曲线
-        </h2>
-        <div className="mt-6 rounded-[20px] border border-stone-200 bg-mist p-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 id="trend-title" className="text-2xl font-semibold">体重曲线</h2>
+          <div className="inline-flex rounded-full bg-stone-100 p-1" aria-label="体重曲线视图">
+            {([
+              ['day', '日'],
+              ['week', '孕周'],
+              ['records', '仅看有记录'],
+            ] as const).map(([mode, label]) => (
+              <button
+                key={mode}
+                className={`rounded-full px-3 py-2 text-sm transition ${
+                  chartMode === mode
+                    ? 'bg-warm-white font-semibold text-forest-900 shadow-sm'
+                    : 'text-moss-600'
+                }`}
+                type="button"
+                aria-pressed={chartMode === mode}
+                onClick={() => setChartMode(mode)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="mt-5 rounded-[20px] border border-stone-200 bg-warm-white p-3">
           <svg
             className="h-auto w-full overflow-visible"
             viewBox={`0 0 ${TREND_CHART_VIEWBOX.width} ${TREND_CHART_VIEWBOX.height}`}
             role="img"
             aria-labelledby="trend-chart-title trend-chart-desc"
           >
-            <title id="trend-chart-title">孕期体重增重趋势坐标图</title>
+            <title id="trend-chart-title">孕期体重曲线图</title>
             <desc id="trend-chart-desc">
-              横轴为孕周，纵轴为相对孕前体重的增重千克，可点击记录节点查看周详情。
+              纵轴为体重千克，可切换按日、按孕周或仅查看有记录的数据。
             </desc>
             <rect
               x={chartScale.padding.left}
@@ -913,18 +1084,19 @@ function TrendPage({
               opacity="0.72"
             />
 
-            {standardBandPath && (
+            {chartBandPath && (
               <path
-                d={standardBandPath}
-                fill="#a8b79c"
-                opacity="0.3"
-                stroke="#8b9a82"
+                d={chartBandPath}
+                fill="#b8efe5"
+                opacity="0.55"
+                stroke="#43cdb7"
                 strokeWidth="1"
+                strokeDasharray="5 5"
                 strokeLinejoin="round"
               />
             )}
 
-            {TREND_CHART_GAIN_TICKS.map((tick) => {
+            {weightTicks.map((tick) => {
               const y = chartScale.yForGain(tick);
 
               return (
@@ -934,8 +1106,9 @@ function TrendPage({
                     y1={y}
                     x2={chartScale.width - chartScale.padding.right}
                     y2={y}
-                    stroke="#e4ddcf"
+                    stroke="#d8dedb"
                     strokeWidth="1"
+                    strokeDasharray="5 5"
                   />
                   <text
                     x={chartScale.padding.left - 10}
@@ -944,33 +1117,37 @@ function TrendPage({
                     fontSize="10"
                     textAnchor="end"
                   >
-                    {tick}
+                    {tick.toFixed(1)}
                   </text>
                 </g>
               );
             })}
 
-            {TREND_CHART_WEEK_TICKS.map((tick) => {
-              const x = chartScale.xForWeek(tick);
+            {xTicks.map((tick) => {
+              const x = chartScale.xForWeek(tick.x);
 
               return (
-                <g key={tick}>
+                <g key={`${tick.x}-${tick.primaryLabel}`}>
                   <line
                     x1={x}
                     y1={chartScale.padding.top}
                     x2={x}
                     y2={chartScale.height - chartScale.padding.bottom}
-                    stroke="#eadfcb"
+                    stroke="#d8dedb"
                     strokeWidth="1"
+                    strokeDasharray="5 5"
                   />
                   <text
                     x={x}
-                    y={chartScale.height - 17}
+                    y={chartScale.height - 28}
                     fill="#687965"
                     fontSize="10"
                     textAnchor="middle"
                   >
-                    {tick}
+                    <tspan x={x}>{tick.primaryLabel}</tspan>
+                    {tick.secondaryLabel && (
+                      <tspan x={x} dy="11">{tick.secondaryLabel}</tspan>
+                    )}
                   </text>
                 </g>
               );
@@ -981,37 +1158,40 @@ function TrendPage({
               y1={chartScale.height - chartScale.padding.bottom}
               x2={chartScale.width - chartScale.padding.right}
               y2={chartScale.height - chartScale.padding.bottom}
-              stroke="#53614f"
-              strokeWidth="1.4"
+              stroke="#cbd3cf"
+              strokeWidth="1"
             />
             <line
               x1={chartScale.padding.left}
               y1={chartScale.padding.top}
               x2={chartScale.padding.left}
               y2={chartScale.height - chartScale.padding.bottom}
-              stroke="#53614f"
-              strokeWidth="1.4"
+              stroke="#cbd3cf"
+              strokeWidth="1"
             />
 
-            {trendLinePath && (
+            {weightLinePath && (
               <path
-                d={trendLinePath}
+                d={weightLinePath}
                 fill="none"
-                stroke="#334538"
-                strokeWidth="2.4"
+                stroke="#00bfa5"
+                strokeWidth="3"
                 strokeLinecap="round"
                 strokeLinejoin="round"
               />
             )}
 
-            {trendPoints.map((point) => {
-              const x = chartScale.xForWeek(point.week);
-              const y = chartScale.yForGain(point.gainKg);
-              const isSelected = selectedPoint?.week === point.week;
+            {chartPoints.map((point, index) => {
+              const x = chartScale.xForWeek(point.x);
+              const y = chartScale.yForGain(point.weightKg);
+              const isLatest = index === chartPoints.length - 1;
+              const color = getWeightStatusColor(point.status);
+              const showPointLabel =
+                isLatest || chartMode !== 'week' || chartPoints.length <= 8 || index % 2 === 0;
 
               return (
                 <g
-                  key={point.week}
+                  key={`${chartMode}-${point.x}-${point.week}`}
                   role="button"
                   tabIndex={0}
                   className="cursor-pointer outline-none"
@@ -1025,30 +1205,35 @@ function TrendPage({
                   }}
                 >
                   <circle cx={x} cy={y} r="13" fill="transparent" />
-                  {isSelected && (
+                  {isLatest && (
                     <circle
                       cx={x}
                       cy={y}
-                      r="7.2"
-                      fill="none"
-                      stroke="#8b9a82"
-                      strokeWidth="1.8"
+                      r="9"
+                      fill="#fffdf8"
+                      stroke={color}
+                      strokeWidth="4"
                     />
                   )}
-                  <circle
-                    cx={x}
-                    cy={y}
-                    r="3.8"
-                    fill="#fffdf8"
-                    stroke="#334538"
-                    strokeWidth="2"
-                  />
+                  {!isLatest && <circle cx={x} cy={y} r="4" fill={color} />}
+                  {showPointLabel && (
+                    <text
+                      x={x}
+                      y={y - 12}
+                      fill={isLatest ? color : '#687965'}
+                      fontSize={isLatest ? '11' : '9'}
+                      fontWeight={isLatest ? '700' : '600'}
+                      textAnchor="middle"
+                    >
+                      {formatWeightInput(point.weightKg)}{isLatest ? ' 公斤' : ''}
+                    </text>
+                  )}
                 </g>
               );
             })}
 
             <text x="10" y="14" fill="#4a5e4e" fontSize="10">
-              增重 kg
+              体重 kg
             </text>
             <text
               x={chartScale.width - chartScale.padding.right}
@@ -1057,38 +1242,29 @@ function TrendPage({
               fontSize="10"
               textAnchor="end"
             >
-              孕周
+              {chartMode === 'week' ? '孕周' : '日期'}
             </text>
           </svg>
           <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-moss-600">
             <span className="inline-flex items-center gap-2">
-              <span className="h-2.5 w-5 rounded-full bg-leaf-400/45 ring-1 ring-sage-500/40" />
-              估算参考带
+              <span className="h-2.5 w-2.5 rounded-full bg-[#3498db]" />
+              偏低
             </span>
             <span className="inline-flex items-center gap-2">
-              <span className="h-0.5 w-5 rounded-full bg-forest-800" />
-              实际增重
+              <span className="h-2.5 w-2.5 rounded-full bg-[#00bfa5]" />
+              正常
+            </span>
+            <span className="inline-flex items-center gap-2">
+              <span className="h-2.5 w-2.5 rounded-full bg-[#f5a623]" />
+              偏高
             </span>
           </div>
-          <button
-            className="mt-3 text-xs font-medium text-moss-700 underline decoration-stone-300 underline-offset-4"
-            type="button"
-            aria-expanded={showStandardInfo}
-            aria-controls="weight-standard-info"
-            onClick={() => setShowStandardInfo((current) => !current)}
-          >
-            参考标准：{WEIGHT_STANDARD_SOURCE.code} {showStandardInfo ? '收起' : 'ⓘ'}
-          </button>
-          {showStandardInfo && (
-            <p id="weight-standard-info" className="mt-2 text-xs leading-5 text-moss-600">
-              《{WEIGHT_STANDARD_SOURCE.title}》。逐周色带是根据标准总增重范围生成的估算轨迹，仅供观察趋势；不适用于多胎妊娠，合并症或并发症请结合产检医生意见。
-            </p>
-          )}
           {selectedPoint ? (
             <div className="mt-4 rounded-[16px] border border-stone-200 bg-warm-white/85 p-4">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <h3 className="text-xl font-semibold text-forest-900">
+                  <p className="text-sm text-moss-600">周详情</p>
+                  <h3 className="mt-1 text-xl font-semibold text-forest-900">
                     第 {selectedPoint.week} 周
                   </h3>
                 </div>
@@ -1127,17 +1303,15 @@ function TrendPage({
                   <p className="mt-1 font-semibold text-forest-900">
                     {getReferenceStatusText(selectedStatus)}
                   </p>
-                  {getReferenceStatusNote(selectedStatus) && (
-                    <p className="mt-1 text-xs leading-5 text-moss-600">
-                      {getReferenceStatusNote(selectedStatus)}
-                    </p>
-                  )}
+                  <p className="mt-1 text-xs leading-5 text-moss-600">
+                    {getReferenceStatusNote(selectedStatus)}
+                  </p>
                 </div>
               </div>
             </div>
           ) : (
             <p className="mt-3 text-center text-sm leading-6 text-forest-700">
-              暂无趋势数据
+              保存体重后，这里会安静地出现趋势点。
             </p>
           )}
         </div>
@@ -1148,22 +1322,11 @@ function TrendPage({
           <div>
             <h3 className="text-xl font-semibold text-forest-900">每周体重变化</h3>
           </div>
-          <div className="text-right">
-            {weeklyTrendRows.length > 0 && (
-              <p className="text-xs leading-5 text-moss-600">共 {weeklyTrendRows.length} 周</p>
-            )}
-            {weeklyTrendRows.length > 2 && (
-              <button
-                className="mt-1 text-sm font-medium text-forest-700 underline decoration-stone-300 underline-offset-4"
-                type="button"
-                aria-expanded={showAllWeeklyRows}
-                aria-controls="weekly-weight-rows"
-                onClick={() => setShowAllWeeklyRows((current) => !current)}
-              >
-                {showAllWeeklyRows ? '收起' : '查看全部'}
-              </button>
-            )}
-          </div>
+          {weeklyTrendRows.length > 0 && (
+            <p className="text-right text-xs leading-5 text-moss-600">
+              共 {weeklyTrendRows.length} 周
+            </p>
+          )}
         </div>
 
         {weeklyTrendRows.length > 0 ? (
@@ -1173,8 +1336,11 @@ function TrendPage({
               <span className="text-right">周均体重</span>
               <span className="text-right">较上周</span>
             </div>
-            <div id="weekly-weight-rows" className="divide-y divide-stone-200/80 bg-warm-white/80">
-              {visibleWeeklyTrendRows.map((point) => (
+            <div className="divide-y divide-stone-200/80 bg-warm-white/80">
+              {weeklyTrendRows
+                .slice()
+                .reverse()
+                .map((point) => (
                   <article
                     key={point.week}
                     className="grid gap-2 px-3 py-3 text-sm"
@@ -1211,7 +1377,7 @@ function TrendPage({
           </div>
         ) : (
           <p className="mt-3 text-sm leading-6 text-forest-700">
-            暂无每周数据
+            保存体重后，这里会按孕周显示周均体重和较上周的变化。
           </p>
         )}
       </div>
@@ -1221,26 +1387,13 @@ function TrendPage({
           <div>
             <h3 className="text-xl font-semibold text-forest-900">本地体重记录</h3>
           </div>
-          <div className="text-right">
-            {recordCount > 0 && (
-              <p className="text-xs leading-5 text-moss-600">共 {historyRecords.length} 天</p>
-            )}
-            {historyRecords.length > 0 && (
-              <button
-                className="mt-1 text-sm font-medium text-forest-700 underline decoration-stone-300 underline-offset-4"
-                type="button"
-                aria-expanded={showLocalRecords}
-                aria-controls="local-weight-records"
-                onClick={() => setShowLocalRecords((current) => !current)}
-              >
-                {showLocalRecords ? '收起' : '展开记录'}
-              </button>
-            )}
-          </div>
+          {recordCount > 0 && (
+            <p className="text-right text-xs leading-5 text-moss-600">共 {historyRecords.length} 天</p>
+          )}
         </div>
 
-        {historyRecords.length > 0 && showLocalRecords ? (
-          <div id="local-weight-records" className="mt-4 divide-y divide-stone-200/80">
+        {historyRecords.length > 0 ? (
+          <div className="mt-4 divide-y divide-stone-200/80">
             {historyRecords.map((record) => {
               const gestationalWeek = getGestationalWeekByDate(profile.dueDate, record.date);
 
@@ -1260,11 +1413,11 @@ function TrendPage({
               );
             })}
           </div>
-        ) : historyRecords.length === 0 ? (
+        ) : (
           <p className="mt-3 text-sm leading-6 text-forest-700">
-            暂无记录
+            保存体重后，记录会按日期倒序安静地放在这里。
           </p>
-        ) : null}
+        )}
       </div>
     </section>
   );
@@ -1515,9 +1668,12 @@ function SettingsPage({
   };
 
   return (
-    <section className="space-y-5" aria-label="设置与数据">
+    <section className="space-y-5" aria-labelledby="settings-title">
       <div className="rounded-[24px] border border-stone-200 bg-warm-white p-5 shadow-soft">
-        <div className="grid gap-3">
+        <h2 id="settings-title" className="text-2xl font-semibold">
+          设置与数据
+        </h2>
+        <div className="mt-6 grid gap-3">
           <a className="app-button app-button-secondary grid place-items-center" href="#profile-settings">
             个人信息
           </a>
@@ -1767,9 +1923,17 @@ function SettingsPage({
       </div>
       <div className="rounded-[20px] border border-stone-200 bg-warm-white/80 p-5">
         <h3 className="text-xl font-semibold text-forest-900">本地保存与备份</h3>
-        <p className="mt-3 text-sm leading-6 text-forest-700">
-          数据仅保存在当前浏览器，现有 {recordCount} 条记录。更换设备或清理浏览器数据前，建议导出备份。
-        </p>
+        <div className="mt-3 grid gap-3 text-sm leading-6 text-forest-700">
+          <p>
+            数据仅保存在当前浏览器。当前本地资料：已填写，体重记录 {recordCount} 条。
+          </p>
+          <p>
+            如果清理浏览器数据、更换设备，或使用隐私模式，本地记录可能不会继续保留。
+          </p>
+          <p>
+            可以隔一段时间导出 CSV，留一份自己的备份；需要恢复时，可从 CSV 或 Excel 导入。
+          </p>
+        </div>
         <button
           className="app-button app-button-secondary mt-5 w-full"
           type="button"
@@ -1835,6 +1999,7 @@ function BottomTabs({
                 {tab.icon}
               </span>
               <span className="text-sm font-semibold leading-none">{tab.label}</span>
+              <span className="text-[11px] leading-none text-moss-600">{tab.description}</span>
             </button>
           );
         })}
