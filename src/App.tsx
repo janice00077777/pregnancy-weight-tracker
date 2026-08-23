@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useMemo, useState } from 'react';
+import { type FormEvent, useEffect, useRef, useState } from 'react';
 import { calculateBMIResult, getBMICategoryLabel } from './services/bmi';
 import {
   createTrendChartScale,
@@ -18,6 +18,7 @@ import {
 import {
   addDaysToDateOnly,
   calculatePregnancyProgress,
+  differenceInCalendarDays,
   getGestationalWeekByDate,
   getTodayDateOnly,
   isValidDateOnly,
@@ -281,11 +282,6 @@ function App() {
   const [activeTab, setActiveTab] = useState<TabId>('home');
   const [appData, setAppData] = useState(loadAppData);
 
-  const activeTitle = useMemo(
-    () => tabs.find((tab) => tab.id === activeTab)?.label ?? '主页',
-    [activeTab],
-  );
-
   const saveProfileAndRefresh = (profile: PregnancyProfile) => {
     const result = saveProfile(profile);
 
@@ -338,11 +334,7 @@ function App() {
   return (
     <div className="min-h-dvh bg-mist text-forest-900">
       <div className="mx-auto flex min-h-dvh w-full max-w-md flex-col">
-        <header className="px-5 pb-3 pt-5">
-          <h1 className="text-2xl font-semibold leading-tight">{activeTitle}</h1>
-        </header>
-
-        <main className="flex-1 px-5 pb-28">
+        <main className="flex-1 px-5 pb-28 pt-5">
           {activeTab === 'home' && (
             <HomePage
               profile={appData.profile}
@@ -829,8 +821,16 @@ function TrendPage({
   const historyRecords = getLatestHistoryRecords(records);
   const historyRecordsAsc = historyRecords.slice().reverse();
   const todayDate = getTodayDateOnly();
-  const recentDates = Array.from({ length: 7 }, (_, index) =>
-    addDaysToDateOnly(todayDate, index - 6),
+  const sevenDaysAgo = addDaysToDateOnly(todayDate, -6) ?? todayDate;
+  const earliestRecordDate = historyRecordsAsc[0]?.date;
+  const dailyStartDate =
+    earliestRecordDate && earliestRecordDate < sevenDaysAgo ? earliestRecordDate : sevenDaysAgo;
+  const dailyDateCount = Math.max(
+    7,
+    (differenceInCalendarDays(dailyStartDate, todayDate) ?? 6) + 1,
+  );
+  const dailyDates = Array.from({ length: dailyDateCount }, (_, index) =>
+    addDaysToDateOnly(dailyStartDate, index),
   ).filter((date): date is string => date !== null);
 
   const createChartPoint = ({
@@ -860,7 +860,7 @@ function TrendPage({
       primaryLabel: String(point.week),
     }),
   );
-  const dailyChartPoints = recentDates.flatMap((date, index) => {
+  const dailyChartPoints = dailyDates.flatMap((date, index) => {
     const record = getLatestRecordForDate(records, date);
     const progress = calculatePregnancyProgress(profile.dueDate, date);
 
@@ -878,7 +878,7 @@ function TrendPage({
       }),
     ];
   });
-  const recordedChartPoints = historyRecordsAsc.slice(-7).map((record, index) => {
+  const recordedChartPoints = historyRecordsAsc.map((record, index) => {
     const progress = calculatePregnancyProgress(profile.dueDate, record.date);
 
     return createChartPoint({
@@ -906,7 +906,7 @@ function TrendPage({
             minWeightKg: profile.preWeightKg + range.minGainKg,
             maxWeightKg: profile.preWeightKg + range.maxGainKg,
           }))
-        : recentDates.flatMap((date, index) => {
+        : dailyDates.flatMap((date, index) => {
             const week = getGestationalWeekByDate(profile.dueDate, date);
             const range = week ? getStandardRange(profile.bmiCategory, week) : null;
 
@@ -925,8 +925,20 @@ function TrendPage({
   ];
   const minChartWeight = Math.floor(Math.min(...allChartWeights) - 2);
   const maxChartWeight = Math.ceil(Math.max(...allChartWeights) + 2);
-  const xDomainMax = chartMode === 'week' ? 40 : Math.max(6, chartPoints.length - 1);
+  const xDomainMax =
+    chartMode === 'week'
+      ? 40
+      : chartMode === 'day'
+        ? Math.max(6, dailyDates.length - 1)
+        : Math.max(6, recordedChartPoints.length - 1);
+  const chartWidth =
+    chartMode === 'week'
+      ? Math.max(TREND_CHART_VIEWBOX.width, 46 + 39 * 52 + 18)
+      : chartMode === 'day'
+        ? Math.max(TREND_CHART_VIEWBOX.width, 46 + (dailyDates.length - 1) * 48 + 18)
+        : Math.max(TREND_CHART_VIEWBOX.width, 46 + (recordedChartPoints.length - 1) * 72 + 18);
   const chartScale = createTrendChartScale({
+    width: chartWidth,
     domain: {
       minWeek: chartMode === 'week' ? 1 : 0,
       maxWeek: xDomainMax,
@@ -946,9 +958,12 @@ function TrendPage({
     secondaryLabel?: string;
   }> =
     chartMode === 'week'
-      ? [4, 12, 20, 28, 36, 40].map((week) => ({ x: week, primaryLabel: String(week) }))
+      ? Array.from({ length: 20 }, (_, index) => (index + 1) * 2).map((week) => ({
+          x: week,
+          primaryLabel: String(week),
+        }))
       : chartMode === 'day'
-        ? recentDates.map((date, index) => {
+        ? dailyDates.map((date, index) => {
             const progress = calculatePregnancyProgress(profile.dueDate, date);
 
             return {
@@ -964,6 +979,19 @@ function TrendPage({
             primaryLabel: point.primaryLabel,
             secondaryLabel: point.secondaryLabel,
           }));
+  const chartScrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      const container = chartScrollRef.current;
+
+      if (container) {
+        container.scrollLeft = container.scrollWidth;
+      }
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [chartMode, chartWidth]);
   const selectedPoint =
     trendPoints.find((point) => point.week === selectedWeek) ?? trendPoints[trendPoints.length - 1];
   const selectedStandardRange = selectedPoint
@@ -1024,9 +1052,15 @@ function TrendPage({
           </div>
         </div>
         <div className="mt-5 rounded-[20px] border border-stone-200 bg-warm-white p-3">
+          <div
+            ref={chartScrollRef}
+            className="overflow-x-auto overscroll-x-contain pb-2"
+            aria-label="体重曲线，可左右滑动查看更早数据"
+          >
           <svg
-            className="h-auto w-full overflow-visible"
-            viewBox={`0 0 ${TREND_CHART_VIEWBOX.width} ${TREND_CHART_VIEWBOX.height}`}
+            className="h-auto max-w-none overflow-visible"
+            width={chartWidth}
+            viewBox={`0 0 ${chartWidth} ${TREND_CHART_VIEWBOX.height}`}
             role="img"
             aria-labelledby="trend-chart-title trend-chart-desc"
           >
@@ -1146,8 +1180,7 @@ function TrendPage({
               const y = chartScale.yForGain(point.weightKg);
               const isLatest = index === chartPoints.length - 1;
               const color = getWeightStatusColor(point.status);
-              const showPointLabel =
-                isLatest || chartMode !== 'week' || chartPoints.length <= 8 || index % 2 === 0;
+              const showPointLabel = isLatest;
 
               return (
                 <g
@@ -1205,6 +1238,7 @@ function TrendPage({
               {chartMode === 'week' ? '孕周' : '日期'}
             </text>
           </svg>
+          </div>
           <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-moss-600">
             <span className="inline-flex items-center gap-2">
               <span className="h-2.5 w-2.5 rounded-full bg-[#3498db]" />
