@@ -25,18 +25,15 @@ export type TrendChartScale = {
 
 export const TREND_CHART_VIEWBOX = {
   width: 340,
-  height: 228,
+  height: 270,
 } as const;
 
 export const TREND_CHART_PADDING: ChartPadding = {
   top: 20,
   right: 18,
-  bottom: 42,
+  bottom: 58,
   left: 46,
 };
-
-export const TREND_CHART_WEEK_TICKS = [1, 12, 24, 40] as const;
-export const TREND_CHART_GAIN_TICKS = [0, 5, 10, 15] as const;
 
 const clampRatio = (value: number) => Math.min(Math.max(value, 0), 1);
 
